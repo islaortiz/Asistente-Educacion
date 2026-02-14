@@ -1,21 +1,27 @@
 # backend/main.py
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import hashlib
 import time
+import os
 
 import backend.model as model
 from backend.metrics import _normalize_for_diff, word_levenshtein_count
 from backend.utils import extract_text_from_pdf, split_into_sentences, posible_tu_impersonal
 from backend.db import (
-    init_db, user_exists, create_user, get_user_id,
+    init_db, user_exists, create_user, get_user_id, get_user_role,
     record_usage, create_document, insert_metric,
     get_user_overview, get_user_documents, get_document_metrics,
     sanitize_username, delete_document, record_login_ts,
-    close_open_session, get_user_weekly_activity
+    close_open_session, get_user_weekly_activity, get_global_overview
 )
 
 app = FastAPI(title="PALABRIA Backend")
+
+# Mount Static Files
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +30,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+async def read_index():
+    return FileResponse("frontend/index.html")
+    
+@app.get("/app")
+async def read_app():
+    return FileResponse("frontend/index.html")
 
 init_db()
 
@@ -42,15 +56,20 @@ def trigger_load():
     return {"ok": True}
 
 @app.post("/users/create")
-def user_create(username: str = Form(...)):
+def user_create(username: str = Form(...), role: str = Form("student")):
     try:
         username = sanitize_username(username)
         if user_exists(username):
             raise HTTPException(status_code=409, detail="El usuario ya existe. Elige otro nombre.")
-        uid = create_user(username)
+        
+        # Validar rol básico
+        if role not in ["student", "professor"]:
+            role = "student"
+            
+        uid = create_user(username, role=role)
         record_usage(uid, "login", None)
         record_login_ts(uid, time.time())
-        return {"ok": True, "user_id": uid, "username": username}
+        return {"ok": True, "user_id": uid, "username": username, "role": role}
     except HTTPException:
         raise
     except Exception as e:
@@ -63,9 +82,11 @@ def user_login(username: str = Form(...)):
         uid = get_user_id(username)
         if uid is None:
             raise HTTPException(status_code=404, detail="La cuenta no existe. Crea una nueva.")
+            
+        role = get_user_role(username)
         record_usage(uid, "login", None)
         record_login_ts(uid, time.time())
-        return {"ok": True, "user_id": uid, "username": username}
+        return {"ok": True, "user_id": uid, "username": username, "role": role}
     except HTTPException:
         raise
     except Exception as e:
@@ -248,9 +269,15 @@ def document_metrics(doc_id: int):
 def user_weekly_activity(username: str):
     return {"username": username, "activity": get_user_weekly_activity(username)}
 
+
+
 @app.delete("/documents/{doc_id}")
 def delete_doc(doc_id: int):
     ok = delete_document(doc_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     return {"ok": True, "deleted_id": doc_id}
+
+@app.get("/professor/overview")
+def professor_overview():
+    return get_global_overview()

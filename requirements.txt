@@ -18,3 +18,4 @@ pdfplumber
 fpdf
 
 pyngrok
+python-multipart

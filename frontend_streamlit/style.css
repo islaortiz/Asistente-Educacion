@@ -1,0 +1,73 @@
+/* Main container styling */
+.main {
+    background-color: #f8fafc;
+    color: #1e293b;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Hide Streamlit branding */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Custom Titles */
+h1 {
+    font-family: 'Outfit', sans-serif;
+    color: #0f172a;
+    font-weight: 700;
+}
+
+h2, h3 {
+    font-family: 'Outfit', sans-serif;
+    color: #334155;
+}
+
+/* Buttons */
+div[data-testid="stButton"] > button {
+    background-color: #2563eb;
+    color: white;
+    border-radius: 8px;
+    border: none;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+div[data-testid="stButton"] > button:hover {
+    background-color: #1d4ed8;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+div[data-testid="stButton"] > button[kind="secondary"] {
+    background-color: #f1f5f9;
+    color: #475569;
+}
+
+/* Cards / Metrics */
+div[data-testid="stMetric"] {
+    background-color: white;
+    padding: 1rem;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    border: 1px solid #e2e8f0;
+}
+
+/* Inputs */
+input[type="text"], input[type="password"] {
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    padding: 0.5rem;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #ffffff;
+    border-right: 1px solid #e2e8f0;
+}
+
+/* Dataframe */
+div[data-testid="stDataFrame"] {
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+}

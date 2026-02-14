@@ -139,41 +139,70 @@ def _load_impl():
     MODEL_LOADED = False
 
     try:
-        _set(5, "Inicializando carga…")
-        try:
-            compute_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
-        except Exception:
-            compute_dtype = torch.float16
+        _set(5, "Detectando hardware...")
+        device_map = "auto"
+        
+        # Detección simple: bitsandbytes 4-bit suele requerir CUDA.
+        # En Mac (MPS) o CPU, es mejor usar float16 sin cuantización bnb por defecto 
+        # (salvo que el usuario tengo un entorno muy específico).
+        # Para evitar el error de "modules dispatched on CPU", si usamos cuantización, 
+        # debemos configurar el offload.
+        
+        use_quantization = torch.cuda.is_available()  # Solo usar BNB si hay Nvidia GPU
+        
+        _set(10, f"Modo: {'GPU (4-bit)' if use_quantization else 'CPU/MPS (float16)'}")
 
-        _set(20, "Preparando configuración de cuantización NF4…")
-        nf4_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=compute_dtype,
-        )
+        if use_quantization:
+            try:
+                compute_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
+            except Exception:
+                compute_dtype = torch.float16
 
-        _set(40, "Cargando tokenizer…")
+            _set(20, "Configurando cuantización (4-bit)...")
+            nf4_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=compute_dtype,
+                llm_int8_enable_fp32_cpu_offload=True # Fix para offload
+            )
+            quant_config = nf4_config
+        else:
+            # En Mac/CPU, no usamos bitsandbytes para evitar incompatibilidades/errores
+            _set(20, "Configurando carga estándar (float16)...")
+            quant_config = None
+
+        _set(40, "Cargando tokenizer...")
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
         if _tokenizer.pad_token is None:
             _tokenizer.pad_token = _tokenizer.eos_token
 
-        _set(75, "Cargando modelo (esto puede tardar)…")
-        _model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
-            trust_remote_code=True,
-            quantization_config=nf4_config,
-            device_map="auto",
-        )
+        _set(60, "Descargando/Cargando modelo (esto puede tardar)...")
+        # Nota: En Mac 16GB, el modelo 7B en fp16 ocupa ~14GB. Va justo.
+        # Si falla, el usuario necesitaría un modelo más pequeño o GGUF (que requeriría cambio de librería).
+        
+        load_kwargs = {
+            "trust_remote_code": True,
+            "device_map": device_map,
+        }
+        if quant_config:
+            load_kwargs["quantization_config"] = quant_config
+        else:
+             load_kwargs["torch_dtype"] = torch.float16
 
+        _model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **load_kwargs)
+
+        _set(90, "Optimizando inferencia...")
         _model.eval()
 
-        _set(95, "Finalizando…")
+        _set(95, "Finalizando...")
         time.sleep(0.5)
         MODEL_LOADED = True
         _set(100, "✅ Modelo cargado y listo")
     except Exception as e:
-        _set(0, f"❌ Error cargando modelo: {e}")
+        error_msg = f"❌ Error cargando modelo: {str(e)}"
+        print(error_msg) # Log en terminal backend
+        _set(0, error_msg)
         MODEL_LOADED = False
 
 

@@ -26,6 +26,7 @@ PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
+  role TEXT DEFAULT 'student',
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -60,6 +61,17 @@ CREATE TABLE IF NOT EXISTS usage_stats(
 def init_db():
     con = sqlite3.connect(DB_PATH)
     try:
+        # Check if users table has 'role' column
+        try:
+            con.execute("SELECT role FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            # Column missing, add it
+            print("Migrating DB: Adding 'role' column to users table...")
+            try:
+                con.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'student'")
+            except Exception as e:
+                print(f"Migration warning: {e}")
+
         con.executescript(DDL)
         con.commit()
     finally:
@@ -92,10 +104,12 @@ def user_exists(username: str) -> bool:
         row = con.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
         return bool(row)
 
-def create_user(username: str) -> int:
+def create_user(username: str, role: str = "student") -> int:
     username = sanitize_username(username)
+    if role not in ["student", "professor"]:
+        role = "student"
     with db() as con:
-        cur = con.execute("INSERT INTO users(username) VALUES(?)", (username,))
+        cur = con.execute("INSERT INTO users(username, role) VALUES(?, ?)", (username, role))
         return cur.lastrowid
 
 def get_user_id(username: str) -> Optional[int]:
@@ -103,6 +117,12 @@ def get_user_id(username: str) -> Optional[int]:
     with db() as con:
         row = con.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
         return row["id"] if row else None
+        
+def get_user_role(username: str) -> str:
+    username = sanitize_username(username)
+    with db() as con:
+        row = con.execute("SELECT role FROM users WHERE username=?", (username,)).fetchone()
+        return row["role"] if row else "student"
 
 def ensure_user(username: str) -> int:
     username = sanitize_username(username)
@@ -110,7 +130,7 @@ def ensure_user(username: str) -> int:
         row = con.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
         if row:
             return row["id"]
-        cur = con.execute("INSERT INTO users(username) VALUES(?)", (username,))
+        cur = con.execute("INSERT INTO users(username, role) VALUES(?, 'student')", (username,))
         return cur.lastrowid
 
 def record_usage(user_id: int, event: str, value: float | None = None):
@@ -345,3 +365,39 @@ def delete_document(doc_id: int) -> bool:
         con.execute("DELETE FROM metrics WHERE document_id=?", (doc_id,))
         cur = con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
         return cur.rowcount > 0
+
+def get_global_overview():
+    """
+    Estadísticas para el Dashboard del Profesor.
+    """
+    with db() as con:
+        # 1. Totales Generales
+        row_stats = con.execute("""
+            SELECT 
+                (SELECT COUNT(*) FROM users WHERE role='student') as total_students,
+                (SELECT COUNT(*) FROM documents) as total_docs
+        """).fetchone()
+
+        # 2. Promedios Globales de Métricas
+        avg_metrics = con.execute("""
+            SELECT metric_name, AVG(metric_value) as val
+            FROM metrics
+            GROUP BY metric_name
+        """).fetchall()
+        
+        # 3. Lista de Alumnos con actividad
+        students = con.execute("""
+            SELECT u.username, COUNT(d.id) as docs_count, MAX(d.uploaded_at) as last_upload
+            FROM users u
+            LEFT JOIN documents d ON u.id = d.user_id
+            WHERE u.role = 'student'
+            GROUP BY u.id
+            ORDER BY last_upload DESC
+        """).fetchall()
+
+        return {
+            "total_students": row_stats["total_students"],
+            "total_docs": row_stats["total_docs"],
+            "avg_metrics": {r["metric_name"]: r["val"] for r in avg_metrics},
+            "students": [dict(s) for s in students]
+        }

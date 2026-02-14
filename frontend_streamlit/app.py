@@ -8,8 +8,19 @@ import hashlib
 from rapidfuzz.distance import Levenshtein as L
 from streamlit.components.v1 import html as st_html
 import altair as alt
+import pandas as pd
 
 st.set_page_config(page_title="PALABRIA", layout="centered")
+
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+try:
+    local_css("frontend/style.css")
+except Exception:
+    pass # Si no existe aún o ruta incorrecta en dev
+
 
 
 PRETTY = {
@@ -278,50 +289,59 @@ def pretty_hms(seconds: float) -> str:
     return " ".join(parts)
 
 def inject_session_js(backend_url: str, username: str):
-    js = f"""
+    js = """
     <script>
-    (function(){{
-      const backend = {repr(backend_url)};
-      const username = {repr(username)};
+    (function(){
+      const backend = "__BACKEND__";
+      const username = "__USERNAME__";
       const hbUrl = backend + "/users/heartbeat";
       const loUrl = backend + "/users/logout";
 
-      function postForm(url, dataObj) {{
+      function postForm(url, dataObj) {
         const formData = new URLSearchParams();
         for (const k in dataObj) formData.append(k, dataObj[k]);
-        return fetch(url, {{
+        return fetch(url, {
           method: "POST",
           mode: "cors",
-          headers: {{"Content-Type":"application/x-www-form-urlencoded"}},
+          headers: {"Content-Type":"application/x-www-form-urlencoded"},
           body: formData.toString()
-        }}).catch(()=>{{}});
-      }}
+        }).catch(()=>{});
+      }
 
-      const sendHeartbeat = () => postForm(hbUrl, {{username}});
+      const sendHeartbeat = () => {
+        const params = new URLSearchParams();
+        params.append("username", username);
+        fetch(hbUrl, {
+            method: "POST",
+            headers: {"Content-Type": "application/x-www-form-urlencoded"},
+            body: params
+        }).catch(()=>{});
+      };
       // Heartbeat inicial y luego cada 20s
       sendHeartbeat();
       const hbTimer = setInterval(sendHeartbeat, 20000);
 
-      function beaconLogout() {{
-        try {{
-          if (!navigator.sendBeacon) {{
-            postForm(loUrl, {{username}});
+      function beaconLogout() {
+        try {
+          if (!navigator.sendBeacon) {
+            postForm(loUrl, {username});
             return;
-          }}
+          }
           const data = new URLSearchParams();
           data.append("username", username);
-          const blob = new Blob([data.toString()], {{type: "application/x-www-form-urlencoded"}});
+          const blob = new Blob([data.toString()], {type: "application/x-www-form-urlencoded"});
           navigator.sendBeacon(loUrl, blob);
-        }} catch (e) {{}}
-      }}
+        } catch (e) {}
+      }
 
       window.addEventListener("beforeunload", beaconLogout);
-      document.addEventListener("visibilitychange", function(){{
+      document.addEventListener("visibilitychange", function(){
         if (document.visibilityState === "hidden") beaconLogout();
-      }});
-    }})();
+      });
+    })();
     </script>
     """
+    js = js.replace("__BACKEND__", backend_url).replace("__USERNAME__", username)
     st_html(js, height=0)
 
 def has_current_analysis() -> bool:
@@ -371,6 +391,96 @@ def _post_user_changes(backend_url, doc_id: int, changes: int):
     except Exception:
         pass
 
+def professor_dashboard(backend_url):
+    st.markdown("<h2 class='h-section'>🎓 Dashboard del Profesor</h2>", unsafe_allow_html=True)
+    
+    try:
+        r = requests.get(f"{backend_url}/professor/overview", timeout=10)
+        if not r.ok:
+            st.error("No se pudo cargar la vista de profesor.")
+            return
+        data = r.json()
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return
+
+    # Tarjetas de KPI
+    st.markdown("""
+    <style>
+    div[data-testid="stMetric"] { background-color: #f8fafc; border: 1px solid #e2e8f0; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("👨‍🎓 Alumnos", data.get("total_students", 0))
+    c2.metric("📄 Documentos Totales", data.get("total_docs", 0))
+    
+    avg_metrics = data.get("avg_metrics", {})
+    avg_tu = avg_metrics.get("frases_con_tu_impersonal", 0)
+    c3.metric("⚠️ Promedio Errores 'Tú'", f"{float(avg_tu):.1f}")
+
+    st.markdown("<h3 class='h-section'>📉 Rendimiento de la Clase</h3>", unsafe_allow_html=True)
+    
+    # Gráficos (Altair)
+    if avg_metrics:
+        # Preparamos datos para gráfico de barras de métricas promedio
+
+        metrics_df = pd.DataFrame([
+            {"Métrica": k, "Valor": v} for k, v in avg_metrics.items() 
+            if k in ["total_frases", "frases_con_tu_impersonal", "cambios_realizados_usuario"]
+        ])
+        
+        c = alt.Chart(metrics_df).mark_bar().encode(
+            x=alt.X('Métrica', sort="-y"),
+            y='Valor',
+            color=alt.Color('Métrica', legend=None),
+            tooltip=['Métrica', 'Valor']
+        ).properties(height=300)
+        st.altair_chart(c, use_container_width=True)
+
+    st.markdown("<h3 class='h-section'>📋 Lista de Alumnos</h3>", unsafe_allow_html=True)
+    students = data.get("students", [])
+    if students:
+        df_st = pd.DataFrame(students)
+        df_st.rename(columns={"username": "Usuario", "docs_count": "Docs", "last_upload": "Última Actividad"}, inplace=True)
+        st.dataframe(df_st, use_container_width=True)
+    else:
+        st.info("No hay alumnos registrados aún.")
+
+def create_account():
+    with st.form("create_account_form"):
+        st.markdown("<h2 class='h-section'>📝 Crear nueva cuenta</h2>", unsafe_allow_html=True)
+        new_username = st.text_input("Usuario (letras/números/_-. máx 32)")
+        role = st.radio("Rol:", ["Estudiante", "Profesor"], horizontal=True)
+        submit = st.form_submit_button("Crear cuenta")
+        if submit:
+            if new_username:
+                backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+                role_val = "student" if role == "Estudiante" else "professor"
+                try:
+                    r = requests.post(f"{backend_url}/users/create", data={"username": new_username, "role": role_val}, timeout=10)
+                    if r.ok and r.json().get("ok"):
+                        st.session_state["usuario"] = new_username
+                        st.session_state["role"] = r.json().get("role", "student")
+                        st.session_state["logged_in"] = True
+                        st.session_state["show_login"] = False
+                        st.session_state["show_create_account"] = False
+                        st.success(f"Cuenta creada para {new_username}")
+                        _clear_status_cache()
+                        _clear_metrics_cache()
+                        _clear_input_cache()
+                        st.rerun()
+                    else:
+                        try:
+                            msg = r.json().get("detail", r.text)
+                        except Exception:
+                            msg = r.text
+                        st.error(msg or "No se pudo crear la cuenta.")
+                except Exception as e:
+                    st.error(f"Error conectando con backend: {e}")
+            else:
+                st.warning("Por favor, escribe un nombre de usuario.")
+
 def login():
     with st.form("login_form"):
         st.markdown("<h2 class='h-section'>🔓 Iniciar sesión</h2>", unsafe_allow_html=True)
@@ -383,6 +493,7 @@ def login():
                     r = requests.post(f"{backend_url}/users/login", data={"username": username}, timeout=10)
                     if r.ok and r.json().get("ok"):
                         st.session_state["usuario"] = username
+                        st.session_state["role"] = r.json().get("role", "student") # Guardar rol
                         st.session_state["logged_in"] = True
                         st.session_state["show_login"] = False
                         st.session_state["show_create_account"] = False
@@ -402,36 +513,6 @@ def login():
             else:
                 st.warning("Por favor, escribe un nombre de usuario.")
 
-def create_account():
-    with st.form("create_account_form"):
-        st.markdown("<h2 class='h-section'>📝 Crear nueva cuenta</h2>", unsafe_allow_html=True)
-        new_username = st.text_input("Elige un nombre de usuario (letras/números/_-. máx 32)")
-        submit = st.form_submit_button("Crear cuenta")
-        if submit:
-            if new_username:
-                backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-                try:
-                    r = requests.post(f"{backend_url}/users/create", data={"username": new_username}, timeout=10)
-                    if r.ok and r.json().get("ok"):
-                        st.session_state["usuario"] = new_username
-                        st.session_state["logged_in"] = True
-                        st.session_state["show_login"] = False
-                        st.session_state["show_create_account"] = False
-                        st.success(f"Cuenta creada para {new_username}")
-                        _clear_status_cache()
-                        _clear_metrics_cache()
-                        _clear_input_cache()
-                        st.rerun()
-                    else:
-                        try:
-                            msg = r.json().get("detail", r.text)
-                        except Exception:
-                            msg = r.text
-                        st.error(msg or "No se pudo crear la cuenta.")
-                except Exception as e:
-                    st.error(f"Error conectando con backend: {e}")
-            else:
-                st.warning("Por favor, escribe un nombre de usuario.")
 
 
 def cargar_metricas(username, backend_url):
@@ -469,7 +550,7 @@ def ver_mis_metricas(username, backend_url):
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Actualizar métricas", key="btn_refresh_metrics", use_container_width=True):
+    if st.button("Actualizar métricas", key="btn_refresh_metrics", width=True):
         cargar_metricas(username, backend_url)
         for d in st.session_state.get("__cache_documents", []):
             _fetch_and_cache_doc_metrics(backend_url, d["id"])
@@ -598,7 +679,7 @@ def ver_mis_metricas(username, backend_url):
                         )
                         .properties(height=300, width="container")
                     )
-                    st.altair_chart(chart, use_container_width=True)
+                    st.altair_chart(chart, width=True)
                 else:
                     st.info("Sin datos de actividad aún.")
             else:
@@ -627,13 +708,13 @@ def ver_mis_metricas(username, backend_url):
                             (cA if i % 2 == 0 else cB).metric(PRETTY[k], pretty_int(latest_by_name[k]))
 
                 del_flag_key = f"__confirm_del_{d['id']}"
-                if st.button("❌ Eliminar", key=f"del_{d['id']}", use_container_width=True):
+                if st.button("❌ Eliminar", key=f"del_{d['id']}", width=True):
                     st.session_state[del_flag_key] = True
 
                 if st.session_state.get(del_flag_key):
                     st.warning("Esta acción eliminará definitivamente el documento y sus métricas. ¿Confirmas?")
                     col_ok, col_cancel = st.columns(2)
-                    if col_ok.button("Sí, eliminar", key=f"ok_{d['id']}", use_container_width=True):
+                    if col_ok.button("Sí, eliminar", key=f"ok_{d['id']}", width=True):
                         try:
                             r = requests.delete(f"{backend_url}/documents/{d['id']}", timeout=15)
                             if r.ok and r.json().get("ok"):
@@ -648,38 +729,43 @@ def ver_mis_metricas(username, backend_url):
                                 st.error(f"No se pudo eliminar: {r.text}")
                         except Exception as e:
                             st.error(f"Error eliminando: {e}")
-                    if col_cancel.button("Cancelar", key=f"cancel_{d['id']}", use_container_width=True):
+                    if col_cancel.button("Cancelar", key=f"cancel_{d['id']}", width=True):
                         st.session_state[del_flag_key] = False
     else:
         st.info("No hay documentos aún.")
 
+
+
 def render_status(backend_url):
     if "modelo_listo" not in st.session_state:
         st.session_state["modelo_listo"] = False
-    if "status_progress" not in st.session_state:
-        st.session_state["status_progress"] = 0
-    if "status_message" not in st.session_state:
-        st.session_state["status_message"] = "⚡ Preparando…"
-
-    st.progress(st.session_state["status_progress"])
-
+    
+    # Si ya está listo, mostrar éxito y salir
     if st.session_state["modelo_listo"]:
         st.success("✅ Modelo cargado y listo para subir PDFs")
         return
 
-    estado = fetch_status(backend_url, timeout=5)
-    st.session_state["modelo_listo"]  = bool(estado.get("modelo_listo"))
-    st.session_state["status_progress"] = int(estado.get("progress", 0))
-    st.session_state["status_message"]  = estado.get("message", "")
-    st.info(st.session_state["status_message"] or "⚡ Cargando…")
+    # Consultar estado
+    estado = fetch_status(backend_url, timeout=2)
+    is_ready = bool(estado.get("modelo_listo"))
+    progress = int(estado.get("progress", 0))
+    message = estado.get("message", "⚡ Cargando…")
 
-    if st.button("🔄 Actualizar estado", key="btn_status_refresh_main", use_container_width=True):
-        estado = fetch_status(backend_url, timeout=5)
-        st.session_state["modelo_listo"]  = bool(estado.get("modelo_listo"))
-        st.session_state["status_progress"] = int(estado.get("progress", 0))
-        st.session_state["status_message"]  = estado.get("message", "")
+    # Actualizar sesión
+    st.session_state["modelo_listo"] = is_ready
 
-    st.stop()
+    # Si se acaba de terminar, rerun para quitar la barra de carga
+    if is_ready:
+        st.rerun()
+
+    # Mostrar barra y mensaje
+    st.info(f"{message} ({progress}%)")
+    st.progress(progress)
+    
+    # Auto-recarga si no está listo
+    if not is_ready:
+        time.sleep(2)
+        st.rerun()
 
 
 def main_app():
@@ -731,6 +817,14 @@ def main_app():
         st.warning("Por favor, selecciona una opción en la barra lateral.")
         return
 
+    # Routing de Roles
+    role = st.session_state.get("role", "student")
+    if role == "professor":
+        professor_dashboard(backend_url)
+        return
+
+    # --- Student Logic Follows ---
+
     if "load_disparado" not in st.session_state:
         st.session_state["load_disparado"] = False
     if not st.session_state["load_disparado"]:
@@ -767,7 +861,7 @@ def main_app():
 
     if modo_entrada == "Subir PDF":
         st.markdown("<h2 class='h-section'>Sube tu PDF</h2>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("", type=["pdf"], label_visibility="collapsed")
+        uploaded_file = st.file_uploader("Sube tu archivo PDF aquí", type=["pdf"], label_visibility="collapsed")
 
         if uploaded_file is not None:
             file_bytes = uploaded_file.getvalue()

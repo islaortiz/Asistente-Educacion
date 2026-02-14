@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PALABRIA | Asistente Educativo</title>
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;700&display=swap"
+        rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    <!-- Chart.js for Professor Dashboard -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div id="app">
+        <!-- Navigation -->
+        <nav class="navbar" id="navbar" style="display: none;">
+            <div class="logo">PALABRIA</div>
+            <div class="nav-links">
+                <button id="theme-toggle" class="btn-icon" title="Cambiar Tema">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="feather feather-moon">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+                <span id="user-display">Usuario</span>
+                <button id="logout-btn" class="btn btn-secondary">Cerrar Sesión</button>
+            </div>
+        </nav>
+
+        <!-- Views Container -->
+        <main class="container">
+            <!-- Loading Overlay -->
+            <div id="loading-overlay" class="hidden">
+                <div class="loader"></div>
+                <p id="loading-text">Cargando...</p>
+            </div>
+
+            <!-- Login View -->
+            <section id="view-login" class="view active">
+                <div class="auth-card">
+                    <h1>Bienvenido a PALABRIA</h1>
+                    <p class="subtitle">Tu asistente educativo inteligente</p>
+
+                    <div class="tabs">
+                        <button class="tab-btn active" data-target="login-form">Iniciar Sesión</button>
+                        <button class="tab-btn" data-target="register-form">Registrarse</button>
+                    </div>
+
+                    <!-- Login Form -->
+                    <form id="login-form" class="auth-form active">
+                        <div class="form-group">
+                            <label>Usuario</label>
+                            <input type="text" id="login-username" required placeholder="Ej: alumno1">
+                        </div>
+                        <button type="submit" class="btn btn-primary full-width">Entrar</button>
+                    </form>
+
+                    <!-- Register Form -->
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label>Nuevo Usuario</label>
+                            <input type="text" id="reg-username" required placeholder="Nombre de usuario">
+                        </div>
+                        <div class="form-group">
+                            <label>Rol</label>
+                            <div class="role-selector">
+                                <label class="radio-card">
+                                    <input type="radio" name="role" value="student" checked>
+                                    <span class="card-content">
+                                        <span class="icon">🎓</span>
+                                        <span>Estudiante</span>
+                                    </span>
+                                </label>
+                                <label class="radio-card">
+                                    <input type="radio" name="role" value="professor">
+                                    <span class="card-content">
+                                        <span class="icon">👨‍🏫</span>
+                                        <span>Profesor</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary full-width">Crear Cuenta</button>
+                    </form>
+                    <div id="auth-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+
+            <!-- Student Dashboard -->
+            <section id="view-student" class="view hidden">
+                <div class="dashboard-header">
+                    <h2>Panel del Estudiante</h2>
+                    <div id="model-status-card" class="status-card">
+                        <span class="status-icon">⚡</span>
+                        <div class="status-info">
+                            <span id="status-text">Comprobando modelo...</span>
+                            <div class="progress-bar-container hidden">
+                                <div class="progress-bar" id="model-progress"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="content-grid">
+                    <!-- Upload Section -->
+                    <div class="card upload-section">
+                        <h3>Subir Documento</h3>
+                        <div class="upload-area" id="drop-zone">
+                            <div class="icon">📄</div>
+                            <p>Arrastra tu PDF aquí o haz clic para subir</p>
+                            <input type="file" id="file-input" accept=".pdf" hidden>
+                        </div>
+                        <div id="upload-preview" class="hidden">
+                            <span id="file-name">archivo.pdf</span>
+                            <button id="cancel-upload" class="btn-text">✕</button>
+                        </div>
+                        <button id="process-btn" class="btn btn-primary full-width" disabled>Analizar Documento</button>
+                    </div>
+
+                    <!-- Input Text Section -->
+                    <div class="card text-input-section">
+                        <h3>O escribe tu texto</h3>
+                        <textarea id="text-input" placeholder="Escribe o pega tu texto aquí..."></textarea>
+                        <button id="process-text-btn" class="btn btn-secondary full-width">Analizar Texto</button>
+                    </div>
+                </div>
+
+                <!-- Usage Chart -->
+                <div class="card chart-card">
+                    <h3>Tu Actividad Semanal</h3>
+                    <canvas id="studentUsageChart"></canvas>
+                </div>
+
+                <!-- Analysis Results (Hidden by default) -->
+                <div id="analysis-results" class="hidden">
+                    <h3 class="section-title">Resultados del Análisis</h3>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <span class="kpi-label">Frases Totales</span>
+                            <span class="kpi-value" id="kpi-sentences">-</span>
+                        </div>
+                        <div class="kpi-card warning">
+                            <span class="kpi-label">Errores 'Tú'</span>
+                            <span class="kpi-value" id="kpi-errors">-</span>
+                        </div>
+                        <div class="kpi-card info">
+                            <span class="kpi-label">Cambios Propuestos</span>
+                            <span class="kpi-value" id="kpi-changes">-</span>
+                        </div>
+                    </div>
+
+                    <div class="tabs result-tabs">
+                        <button class="tab-btn active" data-target="tab-feedback">Feedback General</button>
+                        <button class="tab-btn" data-target="tab-corrected">Texto Corregido</button>
+                        <button class="tab-btn" data-target="tab-original">Original</button>
+                    </div>
+
+                    <div id="tab-feedback" class="tab-content active code-block"></div>
+                    <div id="tab-corrected" class="tab-content code-block"></div>
+                    <div id="tab-original" class="tab-content code-block"></div>
+                </div>
+            </section>
+
+            <!-- Professor Dashboard -->
+            <section id="view-professor" class="view hidden">
+                <div class="dashboard-header">
+                    <h2>Panel del Profesor</h2>
+                    <button class="btn btn-secondary" id="refresh-prof-btn">🔄 Actualizar</button>
+                </div>
+
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <span class="kpi-label">Alumnos Activos</span>
+                        <span class="kpi-value" id="prof-total-students">0</span>
+                    </div>
+                    <div class="kpi-card">
+                        <span class="kpi-label">Documentos Procesados</span>
+                        <span class="kpi-value" id="prof-total-docs">0</span>
+                    </div>
+                    <div class="kpi-card warning">
+                        <span class="kpi-label">Promedio Errores 'Tú'</span>
+                        <span class="kpi-value" id="prof-avg-errors">0.0</span>
+                    </div>
+                </div>
+
+                <div class="charts-container">
+                    <div class="card chart-card">
+                        <h3>Métricas Globales de la Clase</h3>
+                        <canvas id="classMetricsChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card table-card">
+                    <h3>Listado de Alumnos</h3>
+                    <div class="table-responsive">
+                        <table class="table" id="students-table">
+                            <thead>
+                                <tr>
+                                    <th>Alumno</th>
+                                    <th>Documentos Subidos</th>
+                                    <th>Última Actividad</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- JS Populated -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Main Logic -->
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+
+</html>
