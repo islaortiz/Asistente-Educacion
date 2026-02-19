@@ -73,3 +73,4 @@ Consulta el archivo `TODO.md` para ver la hoja de ruta y las tareas pendientes.
 **Comandos Útiles:**
 *   Verificar estado del servidor: `curl http://127.0.0.1:8000/status/`
 *   Reiniciar base de datos (¡Precaución!): Borrar `data/palabria.db`.
+*   Poblar la BBDD vectorial del RAG con los pdf: `python -m backend.rag.ingest`
