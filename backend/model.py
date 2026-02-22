@@ -4,7 +4,7 @@ import threading
 from typing import List, Optional
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 
 MODEL_LOADED: bool = False
@@ -105,6 +105,7 @@ def _generate_raw_prompt(prompt: str, max_new_tokens: int = 512) -> str:
         **inputs,
         max_new_tokens=max_new_tokens,
         do_sample=False,
+        temperature=0.0,
         eos_token_id=_tokenizer.eos_token_id,
         pad_token_id=_tokenizer.pad_token_id,
     )
@@ -138,50 +139,41 @@ def _load_impl():
     MODEL_LOADED = False
 
     try:
-        _set(5, "Detectando hardware...")
-        device_map = "auto"
-        
-        # Usar 8-bit quantization para reducir memoria en todos los dispositivos
-        # 8-bit es más compatible que 4-bit y consume menos RAM
-        _set(10, "Configurando cuantización (8-bit) para optimizar memoria...")
-        
-        # Crear configuración 8-bit que es compatible con Mac y GPUs
-        from transformers import BitsAndBytesConfig as BnBConfig
-        
-        quant_config = BnBConfig(
-            load_in_8bit=True,
-            llm_int8_enable_fp32_cpu_offload=True,
-            llm_int8_skip_modules=None,
+        _set(5, "Inicializando carga…")
+        try:
+            compute_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
+        except Exception:
+            compute_dtype = torch.float16
+
+        _set(20, "Preparando configuración de cuantización NF4…")
+        nf4_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=compute_dtype,
         )
 
-        _set(40, "Cargando tokenizer...")
+        _set(40, "Cargando tokenizer…")
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
         if _tokenizer.pad_token is None:
             _tokenizer.pad_token = _tokenizer.eos_token
 
-        _set(60, "Descargando/Cargando modelo (esto puede tardar)...")
-        # Con 8-bit quantization, el modelo 7B ocupa ~7-8GB (reducción del 50%)
-        
+        _set(75, "Cargando modelo (esto puede tardar)…")
         _model = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             trust_remote_code=True,
-            device_map=device_map,
-            quantization_config=quant_config,
-            torch_dtype=torch.float16,
-            low_cpu_mem_usage=True
+            quantization_config=nf4_config,
+            device_map="auto",
         )
 
-        _set(90, "Optimizando inferencia...")
         _model.eval()
 
-        _set(95, "Finalizando...")
+        _set(95, "Finalizando…")
         time.sleep(0.5)
         MODEL_LOADED = True
         _set(100, "✅ Modelo cargado y listo")
     except Exception as e:
-        error_msg = f"❌ Error cargando modelo: {str(e)}"
-        print(error_msg) # Log en terminal backend
-        _set(0, error_msg)
+        _set(0, f"❌ Error cargando modelo: {e}")
         MODEL_LOADED = False
 
 
@@ -224,6 +216,7 @@ def _generate_once(text: str, max_new_tokens: int = 512) -> str:
         **inputs,
         max_new_tokens=max_new_tokens,
         do_sample=False,
+        temperature=0.0,
         eos_token_id=_tokenizer.eos_token_id,
         pad_token_id=_tokenizer.pad_token_id,
     )

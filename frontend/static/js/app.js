@@ -184,9 +184,17 @@ function checkSession() {
 	if (user) {
 		state.user = user;
 		state.role = role || 'student';
+		triggerModelLoadIfStudent();
 		showView(state.role === 'professor' ? 'professor' : 'student');
 	} else {
 		showView('login');
+	}
+}
+
+function triggerModelLoadIfStudent() {
+	if (state.role === 'student') {
+		state.modelReady = false;
+		fetch('/load/', { method: 'POST' }).catch(() => { });
 	}
 }
 
@@ -244,10 +252,8 @@ function loginSuccess(user, role) {
 	localStorage.setItem('palabria_user', user);
 	localStorage.setItem('palabria_role', role);
 
-	// Trigger backend load if student
-	if (role === 'student') {
-		fetch('/load/', { method: 'POST' }).catch(() => { });
-	}
+	// Trigger backend load for student users
+	triggerModelLoadIfStudent();
 
 	showView(role === 'professor' ? 'professor' : 'student');
 }
@@ -394,8 +400,8 @@ async function processFile() {
 		const data = await res.json();
 
 		if (data.doc_id) {
-			renderResults(data);
 			clearFileSelection();
+			renderResults(data);
 		} else {
 			console.error('Respuesta sin doc_id:', data);
 			alert('Error al procesar el archivo: respuesta inválida del servidor.');
@@ -666,6 +672,12 @@ async function viewDocumentDetail(docId) {
 		alert('No se pudo cargar el documento');
 	}
 }
+
+// Expose handlers used by inline onclick attributes when running as module
+window.loadDocument = loadDocument;
+window.loadStudentDocuments = loadStudentDocuments;
+window.viewDocumentDetail = viewDocumentDetail;
+window.closeStudentDocs = closeStudentDocs;
 
 // Start
 init();
