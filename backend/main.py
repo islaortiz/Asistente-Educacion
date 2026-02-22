@@ -115,7 +115,7 @@ def user_heartbeat(username: str = Form(...)):
             raise HTTPException(status_code=404, detail="Usuario no válido.")
         now = time.time()
         record_usage(uid, "heartbeat", now)
-        close_open_session(uid, now_epoch=now, idle_secs=1800)
+        close_open_session(uid, now_epoch=now, idle_grace=1800)
         return {"ok": True}
     except HTTPException:
         raise
@@ -148,7 +148,9 @@ async def process_pdf(
     cambios_modelo_total = word_levenshtein_count(original_text, corrected_text)
 
     text_hash = hashlib.sha256((original_text or "").encode("utf-8")).hexdigest()
-    doc_id = create_document(uid, file.filename, text_hash)
+    doc_id = create_document(uid, file.filename, text_hash,
+                           original_text=original_text, corrected_text=corrected_text, 
+                           feedback=feedback)
 
     insert_metric(doc_id, "total_frases", float(total_frases))
     insert_metric(doc_id, "frases_con_tu_impersonal", float(total_errores))
@@ -202,7 +204,9 @@ async def process_text(
     cambios_modelo_total = word_levenshtein_count(original_text, corrected_text)
 
     text_hash = hashlib.sha256((original_text or "").encode("utf-8")).hexdigest()
-    doc_id = create_document(uid, filename or "entrada_texto.txt", text_hash)
+    doc_id = create_document(uid, filename or "entrada_texto.txt", text_hash, 
+                           original_text=original_text, corrected_text=corrected_text, 
+                           feedback=feedback)
 
     insert_metric(doc_id, "total_frases", float(total_frases))
     insert_metric(doc_id, "frases_con_tu_impersonal", float(total_errores))
@@ -261,6 +265,41 @@ def user_overview(username: str):
 def user_documents(username: str):
     return {"documents": get_user_documents(username)}
 
+@app.get("/documents/{doc_id}")
+def get_document(doc_id: int):
+    """Obtener detalles completos de un documento"""
+    try:
+        from backend.db import db
+        with db() as con:
+            doc = con.execute(
+                "SELECT id, user_id, filename, uploaded_at, original_text, corrected_text, feedback FROM documents WHERE id=?",
+                (doc_id,)
+            ).fetchone()
+            
+            if not doc:
+                raise HTTPException(status_code=404, detail="Documento no encontrado")
+            
+            metrics = con.execute(
+                "SELECT metric_name, metric_value FROM metrics WHERE document_id=?",
+                (doc_id,)
+            ).fetchall()
+            
+            metricas = {m["metric_name"]: m["metric_value"] for m in metrics}
+            
+            return {
+                "doc_id": doc["id"],
+                "filename": doc["filename"],
+                "uploaded_at": doc["uploaded_at"],
+                "original_text": doc["original_text"] or "",
+                "corrected": doc["corrected_text"] or "",
+                "feedback": doc["feedback"] or "",
+                "metricas": metricas
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/documents/{doc_id}/metrics")
 def document_metrics(doc_id: int):
     return {"doc_id": doc_id, "metrics": get_document_metrics(doc_id)}
@@ -277,6 +316,48 @@ def delete_doc(doc_id: int):
     if not ok:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     return {"ok": True, "deleted_id": doc_id}
+
+@app.get("/professor/students/{username}/documents")
+def professor_student_documents(username: str):
+    """Obtener todos los documentos de un estudiante para el profesor"""
+    try:
+        username = sanitize_username(username)
+        uid = get_user_id(username)
+        if uid is None:
+            raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+        
+        from backend.db import db
+        with db() as con:
+            docs = con.execute(
+                """SELECT id, filename, uploaded_at, original_text, corrected_text, feedback 
+                   FROM documents WHERE user_id=? ORDER BY uploaded_at DESC""",
+                (uid,)
+            ).fetchall()
+            
+            documents = []
+            for doc in docs:
+                metrics = con.execute(
+                    "SELECT metric_name, metric_value FROM metrics WHERE document_id=?",
+                    (doc["id"],)
+                ).fetchall()
+                
+                metricas = {m["metric_name"]: m["metric_value"] for m in metrics}
+                
+                documents.append({
+                    "id": doc["id"],
+                    "filename": doc["filename"],
+                    "uploaded_at": doc["uploaded_at"],
+                    "original_text": doc["original_text"] or "",
+                    "corrected": doc["corrected_text"] or "",
+                    "feedback": doc["feedback"] or "",
+                    "metricas": metricas
+                })
+            
+            return {"username": username, "documents": documents}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/professor/overview")
 def professor_overview():

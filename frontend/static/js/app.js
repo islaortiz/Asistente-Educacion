@@ -36,9 +36,12 @@ const dom = {
 		fileName: document.getElementById('file-name'),
 		cancelBtn: document.getElementById('cancel-upload'),
 		processBtn: document.getElementById('process-btn'),
+		processBtnTxt: document.getElementById('process-text-btn'),
+		textInput: document.getElementById('text-input'),
 		results: document.getElementById('analysis-results'),
 		resultTabs: document.querySelectorAll('.result-tabs .tab-btn'),
-		usageChartCtx: document.getElementById('studentUsageChart')
+		usageChartCtx: document.getElementById('studentUsageChart'),
+		historyList: document.getElementById('history-list')
 	},
 	prof: {
 		refreshBtn: document.getElementById('refresh-prof-btn'),
@@ -48,7 +51,10 @@ const dom = {
 			docs: document.getElementById('prof-total-docs'),
 			errors: document.getElementById('prof-avg-errors')
 		},
-		chartCtx: document.getElementById('classMetricsChart')
+		chartCtx: document.getElementById('classMetricsChart'),
+		docsContainer: document.getElementById('student-docs-container'),
+		docsList: document.getElementById('student-docs-list'),
+		selectedStudentName: document.getElementById('selected-student-name')
 	}
 };
 
@@ -137,6 +143,21 @@ function setupEventListeners() {
 	dom.student.fileInput.addEventListener('change', (e) => handleFileSelect(e.target.files[0]));
 	dom.student.cancelBtn.addEventListener('click', clearFileSelection);
 	dom.student.processBtn.addEventListener('click', processFile);
+
+	// Text input processing
+	if (dom.student.processBtnTxt) {
+		dom.student.processBtnTxt.addEventListener('click', processText);
+	}
+
+	if (dom.student.textInput) {
+		// Enable/disable analyze button depending on content
+		dom.student.textInput.addEventListener('input', (e) => {
+			const hasText = e.target.value && e.target.value.trim().length > 0;
+			dom.student.processBtnTxt.disabled = !hasText;
+		});
+		// initialize state
+		dom.student.processBtnTxt.disabled = !(dom.student.textInput.value && dom.student.textInput.value.trim().length > 0);
+	}
 
 	// Results Tabs
 	dom.student.resultTabs.forEach(btn => {
@@ -274,6 +295,57 @@ function showView(viewName) {
 	if (viewName === 'professor') {
 		loadProfessorData();
 	}
+	if (viewName === 'student') {
+		loadStudentHistory();
+	}
+}
+
+// Cargar historial de análisis del estudiante
+async function loadStudentHistory() {
+	try {
+		const res = await fetch(`/users/${state.user}/documents`);
+		const data = await res.json();
+		
+		const historyList = document.getElementById('history-list');
+		if (!historyList) return;
+		
+		if (data.documents && data.documents.length > 0) {
+			const historyHtml = data.documents.map(doc => `
+				<div class="history-item" onclick="loadDocument(${doc.id})">
+					<span class="history-name">${doc.filename}</span>
+					<span class="history-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')}</span>
+				</div>
+			`).join('');
+			
+			historyList.innerHTML = historyHtml;
+		} else {
+			historyList.innerHTML = '<p class="text-muted">No hay análisis anteriores</p>';
+		}
+	} catch (err) {
+		console.warn('No se pudo cargar historial:', err);
+		const historyList = document.getElementById('history-list');
+		if (historyList) {
+			historyList.innerHTML = '<p class="text-muted">Error al cargar historial</p>';
+		}
+	}
+}
+
+// Cargar documento del historial
+async function loadDocument(docId) {
+	showLoader(true);
+	try {
+		const res = await fetch(`/documents/${docId}`);
+		const data = await res.json();
+		
+		if (data.doc_id) {
+			renderResults(data);
+		}
+	} catch (err) {
+		console.error('Error cargando documento:', err);
+		alert('No se pudo cargar el documento');
+	} finally {
+		showLoader(false);
+	}
 }
 
 // --- STUDENT LOGIC ---
@@ -311,15 +383,69 @@ async function processFile() {
 		fd.append('username', state.user);
 
 		const res = await fetch('/process/', { method: 'POST', body: fd });
+		
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			console.error('Error del servidor:', res.status, errorData);
+			alert(`Error al procesar el archivo (${res.status}): ${errorData.detail || 'Error desconocido'}`);
+			return;
+		}
+		
 		const data = await res.json();
 
 		if (data.doc_id) {
 			renderResults(data);
+			clearFileSelection();
 		} else {
-			alert('Error al procesar el archivo.');
+			console.error('Respuesta sin doc_id:', data);
+			alert('Error al procesar el archivo: respuesta inválida del servidor.');
 		}
 	} catch (err) {
-		alert('Error conectando con el servidor.');
+		console.error('Error en processFile:', err);
+		alert('Error conectando con el servidor: ' + err.message);
+	} finally {
+		showLoader(false);
+	}
+}
+
+async function processText() {
+	const text = dom.student.textInput ? dom.student.textInput.value : '';
+	if (!text || !text.trim()) return;
+
+	if (!state.user) {
+		alert('Inicia sesión para enviar texto a corrección.');
+		return;
+	}
+
+	showLoader(true);
+	try {
+		const fd = new FormData();
+		fd.append('username', state.user);
+		fd.append('text', text);
+
+		const res = await fetch('/process_text/', { method: 'POST', body: fd });
+		
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			console.error('Error del servidor:', res.status, errorData);
+			alert(`Error al procesar el texto (${res.status}): ${errorData.detail || 'Error desconocido'}`);
+			return;
+		}
+		
+		const data = await res.json();
+
+		if (data.doc_id) {
+			renderResults(data);
+			// Limpiar input después de procesar exitosamente
+			dom.student.textInput.value = '';
+			dom.student.processBtnTxt.disabled = true;
+		} else {
+			console.error('Respuesta sin doc_id:', data);
+			alert('Error al procesar el texto: respuesta inválida del servidor.');
+		}
+	} catch (err) {
+		console.error('Error en processText:', err);
+		alert('Error conectando con el servidor: ' + err.message);
 	} finally {
 		showLoader(false);
 	}
@@ -337,6 +463,24 @@ function renderResults(data) {
 	document.getElementById('tab-feedback').innerHTML = formatFeedback(data.feedback);
 	document.getElementById('tab-corrected').textContent = data.corrected;
 	document.getElementById('tab-original').textContent = data.original_text;
+
+	// Asegurar que el primer tab (feedback) esté activo
+	dom.student.resultTabs.forEach((btn, idx) => {
+		if (idx === 0) {
+			btn.classList.add('active');
+		} else {
+			btn.classList.remove('active');
+		}
+	});
+
+	// Asegurar que solo tab-feedback esté visible
+	document.querySelectorAll('.tab-content').forEach(tab => {
+		if (tab.id === 'tab-feedback') {
+			tab.classList.add('active');
+		} else {
+			tab.classList.remove('active');
+		}
+	});
 }
 
 function formatFeedback(text) {
@@ -362,7 +506,7 @@ async function loadProfessorData() {
 
 		// Table
 		const rows = data.students.map(s => `
-            <tr>
+            <tr onclick="loadStudentDocuments('${s.username}')" style="cursor:pointer;">
                 <td>${s.username}</td>
                 <td>${s.docs_count}</td>
                 <td>${s.last_upload || 'Nunca'}</td>
@@ -446,12 +590,81 @@ function startStatusPolling() {
 	// 2. Heartbeat (Frequency: 30s)
 	setInterval(async () => {
 		if (!state.user) return;
+
+		// Validate username client-side to avoid backend 400 from invalid input
+		const USER_RE = /^[A-Za-z0-9_\-\.]{1,32}$/;
+		if (!USER_RE.test(state.user)) {
+			console.warn('Heartbeat skipped: invalid username', state.user);
+			return;
+		}
+
 		try {
 			const fd = new FormData();
 			fd.append('username', state.user);
-			await fetch('/users/heartbeat', { method: 'POST', body: fd }).catch(() => { });
-		} catch (e) { }
+			const res = await fetch('/users/heartbeat', { method: 'POST', body: fd });
+			if (!res.ok) {
+				console.warn('Heartbeat response', res.status, await res.text());
+			} else {
+				// Optional: small debug log for successful heartbeats
+				// console.debug('Heartbeat OK', state.user);
+			}
+		} catch (e) {
+			console.warn('Heartbeat failed', e);
+		}
 	}, 30000);
+}
+
+// --- PROFESSOR DOCUMENTS ---
+async function loadStudentDocuments(username) {
+	showLoader(true, false);
+	try {
+		const res = await fetch(`/professor/students/${username}/documents`);
+		const data = await res.json();
+		
+		dom.prof.selectedStudentName.textContent = username;
+		
+		if (data.documents && data.documents.length > 0) {
+			const docsHtml = data.documents.map(doc => `
+				<div class="doc-item" onclick="viewDocumentDetail(${doc.id})">
+					<div class="doc-item-name">${doc.filename}</div>
+					<div class="doc-item-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')} - ${doc.metricas.total_frases || 0} frases</div>
+				</div>
+			`).join('');
+			
+			dom.prof.docsList.innerHTML = docsHtml;
+		} else {
+			dom.prof.docsList.innerHTML = '<p class="text-muted">Este alumno no tiene documentos.</p>';
+		}
+		
+		dom.prof.docsContainer.classList.remove('hidden');
+	} catch (err) {
+		console.error('Error cargando documentos:', err);
+		alert('No se pudo cargar los documentos del alumno');
+	} finally {
+		showLoader(false);
+	}
+}
+
+function closeStudentDocs() {
+	dom.prof.docsContainer.classList.add('hidden');
+}
+
+async function viewDocumentDetail(docId) {
+	try {
+		const res = await fetch(`/documents/${docId}`);
+		const data = await res.json();
+		
+		if (data.doc_id) {
+			// Guarda el estudiante para volver después
+			closeStudentDocs();
+			
+			// Muestra los resultados como si fuera del estudiante
+			renderResults(data);
+		}
+	} catch (err) {
+		console.error('Error cargando documento:', err);
+		alert('No se pudo cargar el documento');
+	}
 }
 
 // Start

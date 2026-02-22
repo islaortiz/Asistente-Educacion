@@ -4,7 +4,7 @@ import threading
 from typing import List, Optional
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 MODEL_LOADED: bool = False
@@ -105,7 +105,6 @@ def _generate_raw_prompt(prompt: str, max_new_tokens: int = 512) -> str:
         **inputs,
         max_new_tokens=max_new_tokens,
         do_sample=False,
-        temperature=0.0,
         eos_token_id=_tokenizer.eos_token_id,
         pad_token_id=_tokenizer.pad_token_id,
     )
@@ -142,35 +141,18 @@ def _load_impl():
         _set(5, "Detectando hardware...")
         device_map = "auto"
         
-        # Detección simple: bitsandbytes 4-bit suele requerir CUDA.
-        # En Mac (MPS) o CPU, es mejor usar float16 sin cuantización bnb por defecto 
-        # (salvo que el usuario tengo un entorno muy específico).
-        # Para evitar el error de "modules dispatched on CPU", si usamos cuantización, 
-        # debemos configurar el offload.
+        # Usar 8-bit quantization para reducir memoria en todos los dispositivos
+        # 8-bit es más compatible que 4-bit y consume menos RAM
+        _set(10, "Configurando cuantización (8-bit) para optimizar memoria...")
         
-        use_quantization = torch.cuda.is_available()  # Solo usar BNB si hay Nvidia GPU
+        # Crear configuración 8-bit que es compatible con Mac y GPUs
+        from transformers import BitsAndBytesConfig as BnBConfig
         
-        _set(10, f"Modo: {'GPU (4-bit)' if use_quantization else 'CPU/MPS (float16)'}")
-
-        if use_quantization:
-            try:
-                compute_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float16
-            except Exception:
-                compute_dtype = torch.float16
-
-            _set(20, "Configurando cuantización (4-bit)...")
-            nf4_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=compute_dtype,
-                llm_int8_enable_fp32_cpu_offload=True # Fix para offload
-            )
-            quant_config = nf4_config
-        else:
-            # En Mac/CPU, no usamos bitsandbytes para evitar incompatibilidades/errores
-            _set(20, "Configurando carga estándar (float16)...")
-            quant_config = None
+        quant_config = BnBConfig(
+            load_in_8bit=True,
+            llm_int8_enable_fp32_cpu_offload=True,
+            llm_int8_skip_modules=None,
+        )
 
         _set(40, "Cargando tokenizer...")
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
@@ -178,19 +160,16 @@ def _load_impl():
             _tokenizer.pad_token = _tokenizer.eos_token
 
         _set(60, "Descargando/Cargando modelo (esto puede tardar)...")
-        # Nota: En Mac 16GB, el modelo 7B en fp16 ocupa ~14GB. Va justo.
-        # Si falla, el usuario necesitaría un modelo más pequeño o GGUF (que requeriría cambio de librería).
+        # Con 8-bit quantization, el modelo 7B ocupa ~7-8GB (reducción del 50%)
         
-        load_kwargs = {
-            "trust_remote_code": True,
-            "device_map": device_map,
-        }
-        if quant_config:
-            load_kwargs["quantization_config"] = quant_config
-        else:
-             load_kwargs["torch_dtype"] = torch.float16
-
-        _model = AutoModelForCausalLM.from_pretrained(MODEL_ID, **load_kwargs)
+        _model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            trust_remote_code=True,
+            device_map=device_map,
+            quantization_config=quant_config,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+        )
 
         _set(90, "Optimizando inferencia...")
         _model.eval()
@@ -245,7 +224,6 @@ def _generate_once(text: str, max_new_tokens: int = 512) -> str:
         **inputs,
         max_new_tokens=max_new_tokens,
         do_sample=False,
-        temperature=0.0,
         eos_token_id=_tokenizer.eos_token_id,
         pad_token_id=_tokenizer.pad_token_id,
     )

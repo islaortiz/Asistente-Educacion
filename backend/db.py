@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS documents(
   filename TEXT,
   uploaded_at TEXT DEFAULT (datetime('now')),
   text_hash TEXT,
+  original_text TEXT,
+  corrected_text TEXT,
+  feedback TEXT,
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
@@ -69,6 +72,18 @@ def init_db():
             print("Migrating DB: Adding 'role' column to users table...")
             try:
                 con.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'student'")
+            except Exception as e:
+                print(f"Migration warning: {e}")
+
+        # Check if documents table has new columns
+        try:
+            con.execute("SELECT original_text FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            print("Migrating DB: Adding text columns to documents table...")
+            try:
+                con.execute("ALTER TABLE documents ADD COLUMN original_text TEXT")
+                con.execute("ALTER TABLE documents ADD COLUMN corrected_text TEXT")
+                con.execute("ALTER TABLE documents ADD COLUMN feedback TEXT")
             except Exception as e:
                 print(f"Migration warning: {e}")
 
@@ -183,11 +198,13 @@ def close_open_session(user_id: int, now_epoch: float, idle_grace: float = 1800.
         con.execute("INSERT INTO usage_stats(user_id, event, value) VALUES(?,?,NULL)",
                     (user_id, "logout"))
 
-def create_document(user_id: int, filename: str | None, text_hash: str | None) -> int:
+def create_document(user_id: int, filename: str | None, text_hash: str | None, 
+                   original_text: str | None = None, corrected_text: str | None = None, 
+                   feedback: str | None = None) -> int:
     with db() as con:
         cur = con.execute(
-            "INSERT INTO documents(user_id, filename, text_hash) VALUES(?,?,?)",
-            (user_id, filename, text_hash)
+            "INSERT INTO documents(user_id, filename, text_hash, original_text, corrected_text, feedback) VALUES(?,?,?,?,?,?)",
+            (user_id, filename, text_hash, original_text, corrected_text, feedback)
         )
         return cur.lastrowid
 

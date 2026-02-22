@@ -143,6 +143,14 @@
                     <canvas id="studentUsageChart"></canvas>
                 </div>
 
+                <!-- History Section -->
+                <div class="card history-card">
+                    <h3>Análisis Anteriores</h3>
+                    <div id="history-list" class="history-list">
+                        <p class="text-muted">Cargando historial...</p>
+                    </div>
+                </div>
+
                 <!-- Analysis Results (Hidden by default) -->
                 <div id="analysis-results" class="hidden">
                     <h3 class="section-title">Resultados del Análisis</h3>
@@ -218,6 +226,18 @@
                                 <!-- JS Populated -->
                             </tbody>
                         </table>
+                    </div>
+                </div>
+
+                <!-- Student Documents Detail -->
+                <div id="student-docs-container" class="hidden">
+                    <div class="card">
+                        <h3>Documentos de <span id="selected-student-name">Alumno</span></h3>
+                        <button onclick="closeStudentDocs()" class="btn btn-secondary" style="float:right;">Cerrar</button>
+                        <div style="clear:both;"></div>
+                        <div id="student-docs-list" class="docs-list">
+                            <!-- Populated by JS -->
+                        </div>
                     </div>
                 </div>
             </section>
