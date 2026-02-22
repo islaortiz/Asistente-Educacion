@@ -45,6 +45,17 @@ const dom = {
 	},
 	prof: {
 		refreshBtn: document.getElementById('refresh-prof-btn'),
+		openRagModalBtn: document.getElementById('open-rag-modal-btn'),
+		ragModal: document.getElementById('rag-modal'),
+		closeRagModalBtn: document.getElementById('close-rag-modal-btn'),
+		ragFileInput: document.getElementById('rag-file-input'),
+		ragDropZone: document.getElementById('rag-drop-zone'),
+		ragPreview: document.getElementById('rag-upload-preview'),
+		ragFileName: document.getElementById('rag-file-name'),
+		ragCancelBtn: document.getElementById('rag-cancel-upload'),
+		ragProcessBtn: document.getElementById('rag-process-btn'),
+		ragHistoryRefreshBtn: document.getElementById('rag-refresh-history-btn'),
+		ragHistoryList: document.getElementById('rag-history-list'),
 		tableBody: document.querySelector('#students-table tbody'),
 		kpis: {
 			students: document.getElementById('prof-total-students'),
@@ -175,6 +186,41 @@ function setupEventListeners() {
 
 	// Prof
 	dom.prof.refreshBtn.addEventListener('click', loadProfessorData);
+
+	if (dom.prof.openRagModalBtn) {
+		dom.prof.openRagModalBtn.addEventListener('click', openRagModal);
+	}
+	if (dom.prof.closeRagModalBtn) {
+		dom.prof.closeRagModalBtn.addEventListener('click', closeRagModal);
+	}
+	if (dom.prof.ragModal) {
+		dom.prof.ragModal.addEventListener('click', (e) => {
+			if (e.target === dom.prof.ragModal) closeRagModal();
+		});
+	}
+	if (dom.prof.ragDropZone && dom.prof.ragFileInput) {
+		dom.prof.ragDropZone.addEventListener('click', () => dom.prof.ragFileInput.click());
+		dom.prof.ragDropZone.addEventListener('dragover', (e) => {
+			e.preventDefault();
+			dom.prof.ragDropZone.classList.add('dragover');
+		});
+		dom.prof.ragDropZone.addEventListener('dragleave', () => dom.prof.ragDropZone.classList.remove('dragover'));
+		dom.prof.ragDropZone.addEventListener('drop', (e) => {
+			e.preventDefault();
+			dom.prof.ragDropZone.classList.remove('dragover');
+			handleRagFileSelect(e.dataTransfer.files[0]);
+		});
+		dom.prof.ragFileInput.addEventListener('change', (e) => handleRagFileSelect(e.target.files[0]));
+	}
+	if (dom.prof.ragCancelBtn) {
+		dom.prof.ragCancelBtn.addEventListener('click', clearRagFileSelection);
+	}
+	if (dom.prof.ragProcessBtn) {
+		dom.prof.ragProcessBtn.addEventListener('click', processRagFile);
+	}
+	if (dom.prof.ragHistoryRefreshBtn) {
+		dom.prof.ragHistoryRefreshBtn.addEventListener('click', loadRagHistory);
+	}
 }
 
 // --- AUTH LOGIC ---
@@ -297,6 +343,10 @@ function showView(viewName) {
 		dom.nav.user.textContent = `${state.user} (${state.role === 'student' ? 'Estudiante' : 'Profesor'})`;
 	}
 
+	if (viewName !== 'professor') {
+		closeRagModal();
+	}
+
 	// Init View Data
 	if (viewName === 'professor') {
 		loadProfessorData();
@@ -356,6 +406,7 @@ async function loadDocument(docId) {
 
 // --- STUDENT LOGIC ---
 let selectedFile = null;
+let selectedRagFile = null;
 
 function handleFileSelect(file) {
 	if (!file || file.type !== 'application/pdf') {
@@ -558,7 +609,153 @@ function renderClassChart(metrics) {
 	});
 }
 
+function openRagModal() {
+	if (!dom.prof.ragModal) return;
+	dom.prof.ragModal.classList.remove('hidden');
+	clearRagFileSelection();
+	loadRagHistory();
+}
+
+function closeRagModal() {
+	if (!dom.prof.ragModal) return;
+	dom.prof.ragModal.classList.add('hidden');
+	clearRagFileSelection();
+}
+
+function handleRagFileSelect(file) {
+	if (!file || file.type !== 'application/pdf') {
+		alert('Selecciona un archivo PDF valido.');
+		return;
+	}
+
+	selectedRagFile = file;
+	if (dom.prof.ragFileName) dom.prof.ragFileName.textContent = file.name;
+	if (dom.prof.ragDropZone) dom.prof.ragDropZone.classList.add('hidden');
+	if (dom.prof.ragPreview) dom.prof.ragPreview.classList.remove('hidden');
+	if (dom.prof.ragProcessBtn) dom.prof.ragProcessBtn.disabled = false;
+}
+
+function clearRagFileSelection() {
+	selectedRagFile = null;
+	if (dom.prof.ragFileInput) dom.prof.ragFileInput.value = '';
+	if (dom.prof.ragDropZone) dom.prof.ragDropZone.classList.remove('hidden');
+	if (dom.prof.ragPreview) dom.prof.ragPreview.classList.add('hidden');
+	if (dom.prof.ragProcessBtn) dom.prof.ragProcessBtn.disabled = true;
+}
+
+async function processRagFile() {
+	if (!selectedRagFile || !state.user) return;
+
+	showLoader(true);
+	try {
+		const fd = new FormData();
+		fd.append('file', selectedRagFile);
+		fd.append('username', state.user);
+
+		const res = await fetch('/rag/documents', { method: 'POST', body: fd });
+		const data = await res.json().catch(() => ({}));
+
+		if (!res.ok) {
+			alert(data.detail || 'No se pudo indexar el PDF.');
+			return;
+		}
+
+		clearRagFileSelection();
+		await loadRagHistory();
+		alert(`PDF indexado: ${data.source} (${data.chunks_indexed} chunks)`);
+	} catch (err) {
+		console.error('Error subiendo PDF a vector DB:', err);
+		alert('Error de conexion al subir el PDF.');
+	} finally {
+		showLoader(false);
+	}
+}
+
+async function loadRagHistory() {
+	if (!state.user || !dom.prof.ragHistoryList) return;
+
+	dom.prof.ragHistoryList.innerHTML = '<p class="text-muted">Cargando historial...</p>';
+
+	try {
+		const url = `/rag/documents?username=${encodeURIComponent(state.user)}`;
+		const res = await fetch(url);
+		const data = await res.json().catch(() => ({}));
+
+		if (!res.ok) {
+			dom.prof.ragHistoryList.innerHTML = `<p class="text-muted">${escapeHtml(data.detail || 'No se pudo cargar el historial.')}</p>`;
+			return;
+		}
+
+		const docs = Array.isArray(data.documents) ? data.documents : [];
+		if (!docs.length) {
+			dom.prof.ragHistoryList.innerHTML = '<p class="text-muted">No hay PDFs indexados.</p>';
+			return;
+		}
+
+		dom.prof.ragHistoryList.innerHTML = docs.map(doc => {
+			const source = doc.source || 'archivo.pdf';
+			const encodedSource = encodeURIComponent(source);
+			const chunkCount = Number(doc.chunk_count || 0);
+			const uploadedAt = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString('es-ES') : 'fecha no disponible';
+
+			return `
+				<div class="rag-history-item">
+					<div class="rag-history-meta">
+						<span class="rag-history-source">${escapeHtml(source)}</span>
+						<span class="rag-history-detail">${chunkCount} chunks • ${escapeHtml(uploadedAt)}</span>
+					</div>
+					<button class="btn btn-danger btn-sm" data-rag-delete="${encodedSource}">Eliminar</button>
+				</div>
+			`;
+		}).join('');
+
+		dom.prof.ragHistoryList.querySelectorAll('[data-rag-delete]').forEach(btn => {
+			btn.addEventListener('click', async () => {
+				const source = decodeURIComponent(btn.dataset.ragDelete || '');
+				await deleteRagDocument(source);
+			});
+		});
+	} catch (err) {
+		console.error('Error cargando historial vectorial:', err);
+		dom.prof.ragHistoryList.innerHTML = '<p class="text-muted">Error de conexion.</p>';
+	}
+}
+
+async function deleteRagDocument(sourceName) {
+	if (!sourceName || !state.user) return;
+
+	if (!confirm(`Eliminar "${sourceName}" de la BBDD vectorial?`)) {
+		return;
+	}
+
+	showLoader(true, false);
+	try {
+		const url = `/rag/documents/${encodeURIComponent(sourceName)}?username=${encodeURIComponent(state.user)}`;
+		const res = await fetch(url, { method: 'DELETE' });
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			alert(data.detail || 'No se pudo eliminar el archivo.');
+			return;
+		}
+		await loadRagHistory();
+	} catch (err) {
+		console.error('Error eliminando PDF vectorial:', err);
+		alert('Error de conexion al eliminar.');
+	} finally {
+		showLoader(false);
+	}
+}
+
 // --- SHARED / UTILS ---
+function escapeHtml(value) {
+	return String(value ?? '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 function showLoader(show, overlay = true) {
 	const el = document.getElementById('loading-overlay');
 	if (show && overlay) el.classList.remove('hidden');

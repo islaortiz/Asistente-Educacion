@@ -1,4 +1,6 @@
 # backend/main.py
+from pathlib import Path
+
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +12,11 @@ import os
 import backend.model as model
 from backend.metrics import _normalize_for_diff, word_levenshtein_count
 from backend.utils import extract_text_from_pdf, split_into_sentences, posible_tu_impersonal
+from backend.rag.ingest import (
+    delete_indexed_source,
+    ingest_pdf_bytes,
+    list_indexed_sources,
+)
 from backend.db import (
     init_db, user_exists, create_user, get_user_id, get_user_role,
     record_usage, create_document, insert_metric,
@@ -40,6 +47,16 @@ async def read_app():
     return FileResponse("frontend/index.html")
 
 init_db()
+
+
+def require_professor_user(username: str) -> int:
+    username = sanitize_username(username)
+    uid = get_user_id(username)
+    if uid is None:
+        raise HTTPException(status_code=403, detail="Usuario no valido.")
+    if get_user_role(username) != "professor":
+        raise HTTPException(status_code=403, detail="Solo el profesor puede gestionar la BBDD vectorial.")
+    return uid
 
 
 @app.get("/status/")
@@ -307,6 +324,56 @@ def document_metrics(doc_id: int):
 @app.get("/users/{username}/weekly_activity")
 def user_weekly_activity(username: str):
     return {"username": username, "activity": get_user_weekly_activity(username)}
+
+
+@app.get("/rag/documents")
+def rag_list_documents(username: str):
+    require_professor_user(username)
+    return {"documents": list_indexed_sources()}
+
+
+@app.post("/rag/documents")
+async def rag_upload_document(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+):
+    uid = require_professor_user(username)
+
+    file_name = Path(file.filename or "").name
+    if not file_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
+
+    content = await file.read()
+    try:
+        result = ingest_pdf_bytes(
+            pdf_bytes=content,
+            filename=file_name,
+            batch_size=64,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo indexar el PDF: {e}")
+
+    record_usage(uid, "rag_pdf_uploaded", None)
+    return {"ok": True, **result}
+
+
+@app.delete("/rag/documents/{source_name}")
+def rag_delete_document(source_name: str, username: str):
+    uid = require_professor_user(username)
+    try:
+        result = delete_indexed_source(source_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar el PDF: {e}")
+
+    if not result["deleted"]:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado en la BBDD vectorial.")
+
+    record_usage(uid, "rag_pdf_deleted", None)
+    return {"ok": True, **result}
 
 
 

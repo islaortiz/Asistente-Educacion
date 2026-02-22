@@ -1,7 +1,8 @@
 import hashlib
 import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import chromadb
 import pdfplumber
@@ -13,6 +14,46 @@ from backend.config import appSettings
 settings = appSettings()
 
 DEFAULT_INPUT_DIR = Path("data/rag/raw_pdfs")
+DEFAULT_BATCH_SIZE = 64
+_EMBEDDING_MODEL: SentenceTransformer | None = None
+
+
+def sanitize_pdf_filename(filename: str) -> str:
+    cleaned = Path((filename or "").strip()).name
+    if not cleaned:
+        raise ValueError("Nombre de archivo invalido.")
+    if not cleaned.lower().endswith(".pdf"):
+        raise ValueError("Solo se permiten archivos PDF.")
+    return cleaned
+
+
+def get_or_create_collection():
+    chroma_path = Path(settings.CHROMA_PATH)
+    chroma_path.mkdir(parents=True, exist_ok=True)
+
+    client = chromadb.PersistentClient(path=str(chroma_path))
+    return client.get_or_create_collection(
+        name=settings.COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
+def get_embedding_model() -> SentenceTransformer:
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
+        print(f"[INFO] Loading embedding model: {settings.EMBED_MODEL}")
+        _EMBEDDING_MODEL = SentenceTransformer(settings.EMBED_MODEL)
+    return _EMBEDDING_MODEL
+
+
+def _flatten_ids(raw_ids: Any) -> List[str]:
+    if not raw_ids:
+        return []
+    if isinstance(raw_ids, list):
+        if raw_ids and isinstance(raw_ids[0], list):
+            return [str(item) for group in raw_ids for item in group]
+        return [str(item) for item in raw_ids]
+    return []
 
 
 def clean_text(text: str) -> str:
@@ -159,74 +200,106 @@ def upsert_rows(collection, model: SentenceTransformer, rows: List[Dict], batch_
         )
 
 
-def source_already_indexed(collection, source_name: str) -> bool:
-    existing = collection.get(where={"source": source_name}, limit=1)
-    ids = existing.get("ids", [])
-    return bool(ids)
+def delete_source_chunks(collection, source_name: str) -> int:
+    existing = collection.get(where={"source": source_name}, include=["metadatas"])
+    ids = _flatten_ids(existing.get("ids", []))
+    if not ids:
+        return 0
+    collection.delete(ids=ids)
+    return len(ids)
 
 
-def run_ingest(input_dir: Path, reset: bool, batch_size: int, skip_existing: bool = True) -> None:
-    if not input_dir.exists():
-        raise FileNotFoundError(f"Input dir does not exist: {input_dir}")
+def ingest_pdf_bytes(
+    pdf_bytes: bytes,
+    filename: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    input_dir: Path = DEFAULT_INPUT_DIR,
+) -> Dict[str, Any]:
+    if not pdf_bytes:
+        raise ValueError("El PDF esta vacio.")
 
-    pdf_paths = sorted(input_dir.glob("*.pdf"))
-    if not pdf_paths:
-        print(f"[INFO] No PDFs found in: {input_dir}")
-        return
+    source_name = sanitize_pdf_filename(filename)
+    input_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = input_dir / source_name
+    pdf_path.write_bytes(pdf_bytes)
 
-    chroma_path = Path(settings.CHROMA_PATH)
-    chroma_path.mkdir(parents=True, exist_ok=True)
+    collection = get_or_create_collection()
+    replaced_chunks = delete_source_chunks(collection, source_name)
 
-    client = chromadb.PersistentClient(path=str(chroma_path))
-    collection = client.get_or_create_collection(
-        name=settings.COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
+    rows = build_rows_from_pdf(pdf_path)
+    if not rows:
+        pdf_path.unlink(missing_ok=True)
+        raise ValueError(f"No se encontro texto util en '{source_name}'.")
 
-    if reset:
-        print(f"[INFO] Reset enabled. Deleting collection: {settings.COLLECTION_NAME}")
-        client.delete_collection(name=settings.COLLECTION_NAME)
-        collection = client.get_or_create_collection(
-            name=settings.COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
+    model = get_embedding_model()
+    upsert_rows(collection=collection, model=model, rows=rows, batch_size=batch_size)
+
+    return {
+        "source": source_name,
+        "chunks_indexed": len(rows),
+        "chunks_replaced": replaced_chunks,
+    }
+
+
+def list_indexed_sources(input_dir: Path = DEFAULT_INPUT_DIR) -> List[Dict[str, Any]]:
+    input_dir.mkdir(parents=True, exist_ok=True)
+    collection = get_or_create_collection()
+
+    data = collection.get(include=["metadatas"])
+    metadatas = data.get("metadatas", []) or []
+
+    chunk_count_by_source: Dict[str, int] = {}
+    for metadata in metadatas:
+        if not isinstance(metadata, dict):
+            continue
+        source = metadata.get("source")
+        if not source:
+            continue
+        chunk_count_by_source[source] = chunk_count_by_source.get(source, 0) + 1
+
+    documents: List[Dict[str, Any]] = []
+    for source, chunk_count in chunk_count_by_source.items():
+        pdf_path = input_dir / source
+        uploaded_at = None
+        file_exists = pdf_path.exists()
+        if file_exists:
+            uploaded_at = datetime.fromtimestamp(
+                pdf_path.stat().st_mtime,
+                tz=timezone.utc,
+            ).isoformat()
+
+        documents.append(
+            {
+                "source": source,
+                "chunk_count": chunk_count,
+                "uploaded_at": uploaded_at,
+                "file_exists": file_exists,
+            }
         )
 
-    print(f"[INFO] Loading embedding model: {settings.EMBED_MODEL}")
-    model = SentenceTransformer(settings.EMBED_MODEL)
-
-    total_chunks = 0
-    for pdf_path in pdf_paths:
-        print(f"[INFO] Processing {pdf_path.name} ...")
-        if skip_existing and source_already_indexed(collection, pdf_path.name):
-            print(f"[SKIP] {pdf_path.name}: already indexed")
-            continue
-
-        rows = build_rows_from_pdf(pdf_path)
-        if not rows:
-            print(f"[WARN] No text/chunks found in {pdf_path.name}")
-            continue
-
-        upsert_rows(collection=collection, model=model, rows=rows, batch_size=batch_size)
-        total_chunks += len(rows)
-        print(f"[OK] {pdf_path.name}: {len(rows)} chunks indexed")
-
-    print("")
-    print("[DONE] Ingest complete")
-    print(f"Collection: {settings.COLLECTION_NAME}")
-    print(f"Path: {settings.CHROMA_PATH}")
-    print(f"PDFs processed: {len(pdf_paths)}")
-    print(f"Total chunks: {total_chunks}")
+    documents.sort(key=lambda item: item["source"].lower())
+    return documents
 
 
-if __name__ == "__main__":
-    input_dir = DEFAULT_INPUT_DIR
-    batch_size = 64
-    reset = False
-    skip_existing = True
+def delete_indexed_source(
+    source_name: str,
+    input_dir: Path = DEFAULT_INPUT_DIR,
+    delete_file: bool = True,
+) -> Dict[str, Any]:
+    source_name = sanitize_pdf_filename(source_name)
+    collection = get_or_create_collection()
+    deleted_chunks = delete_source_chunks(collection, source_name)
 
-    run_ingest(
-        input_dir=input_dir,
-        reset=reset,
-        batch_size=batch_size,
-        skip_existing=skip_existing,
-    )
+    deleted_file = False
+    pdf_path = input_dir / source_name
+    if delete_file and pdf_path.exists():
+        pdf_path.unlink()
+        deleted_file = True
+
+    return {
+        "source": source_name,
+        "deleted_chunks": deleted_chunks,
+        "deleted_file": deleted_file,
+        "deleted": bool(deleted_chunks or deleted_file),
+    }
+

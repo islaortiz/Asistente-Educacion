@@ -186,7 +186,10 @@
             <section id="view-professor" class="view hidden">
                 <div class="dashboard-header">
                     <h2>Panel del Profesor</h2>
-                    <button class="btn btn-secondary" id="refresh-prof-btn">🔄 Actualizar</button>
+                    <div class="prof-actions">
+                        <button class="btn btn-primary" id="open-rag-modal-btn">Base Vectorial</button>
+                        <button class="btn btn-secondary" id="refresh-prof-btn">🔄 Actualizar</button>
+                    </div>
                 </div>
 
                 <div class="kpi-grid">
@@ -237,6 +240,39 @@
                         <div style="clear:both;"></div>
                         <div id="student-docs-list" class="docs-list">
                             <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="rag-modal" class="modal-overlay hidden">
+                    <div class="modal-card">
+                        <div class="modal-header">
+                            <h3>Gestion de Base Vectorial</h3>
+                            <button id="close-rag-modal-btn" class="btn-text">x</button>
+                        </div>
+
+                        <div class="modal-body">
+                            <div class="upload-area rag-upload-area" id="rag-drop-zone">
+                                <div class="icon">📚</div>
+                                <p>Arrastra un PDF aqui o haz clic para subir</p>
+                                <input type="file" id="rag-file-input" accept=".pdf" hidden>
+                            </div>
+
+                            <div id="rag-upload-preview" class="hidden">
+                                <span id="rag-file-name">archivo.pdf</span>
+                                <button id="rag-cancel-upload" class="btn-text">x</button>
+                            </div>
+
+                            <button id="rag-process-btn" class="btn btn-primary full-width" disabled>Procesar PDF</button>
+
+                            <div class="rag-history-header">
+                                <h4>Historial de PDFs indexados</h4>
+                                <button id="rag-refresh-history-btn" class="btn btn-secondary">Actualizar</button>
+                            </div>
+
+                            <div id="rag-history-list" class="rag-history-list">
+                                <p class="text-muted">Cargando historial...</p>
+                            </div>
                         </div>
                     </div>
                 </div>
