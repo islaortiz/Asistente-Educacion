@@ -19,3 +19,6 @@ fpdf
 
 pyngrok
 python-multipart
+
+chromadb
+sentence-transformers
