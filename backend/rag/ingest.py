@@ -23,37 +23,76 @@ def clean_text(text: str) -> str:
 
 
 def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """
+    Divide el texto recursivamente usando una jerarquía de separadores para 
+    mantener el contexto semántico (párrafos -> líneas -> frases -> palabras).
+    """
     if not text:
         return []
 
     if overlap >= chunk_size:
-        raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE.")
+        raise ValueError("CHUNK_OVERLAP debe ser menor que CHUNK_SIZE.")
 
-    chunks: List[str] = []
-    start = 0
-    length = len(text)
+    # Jerarquía de separadores de mayor a menor significado semántico
+    separators = ["\n\n", "\n", ". ", " "]
 
-    while start < length:
-        end = min(start + chunk_size, length)
-        if end < length:
-            window_start = start + int(chunk_size * 0.6)
-            split_at = text.rfind(" ", window_start, end)
-            if split_at > start:
-                end = split_at
+    def _split(text_to_split: str, sep_index: int) -> List[str]:
+        # Condición de parada: el texto ya cabe en un chunk
+        if len(text_to_split) <= chunk_size:
+            return [text_to_split]
 
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
+        # Si nos quedamos sin separadores, cortamos por caracteres brutos
+        if sep_index >= len(separators):
+            return [text_to_split[i:i+chunk_size] for i in range(0, len(text_to_split), chunk_size - overlap)]
 
-        if end >= length:
-            break
+        separator = separators[sep_index]
+        
+        # Dividir el texto
+        if separator == ". ":
+            # Truco para no perder el punto al final de las frases
+            splits = [s + ". " for s in text_to_split.split(". ") if s]
+        else:
+            splits = text_to_split.split(separator)
 
-        next_start = end - overlap
-        if next_start <= start:
-            next_start = start + chunk_size
-        start = next_start
+        chunks = []
+        current_chunk_pieces = []
+        current_length = 0
 
-    return chunks
+        for split in splits:
+            split_len = len(split) if separator == ". " else len(split) + len(separator)
+
+            if len(split) > chunk_size:
+                if current_chunk_pieces:
+                    chunks.append(separator.join(current_chunk_pieces).strip())
+                    current_chunk_pieces = []
+                    current_length = 0
+                
+                sub_chunks = _split(split, sep_index + 1)
+                chunks.extend(sub_chunks)
+                continue
+
+            if current_length + len(split) > chunk_size and current_chunk_pieces:
+                chunks.append(separator.join(current_chunk_pieces).strip())
+                
+                overlap_length = 0
+                overlap_pieces = []
+                for piece in reversed(current_chunk_pieces):
+                    if overlap_length + len(piece) > overlap:
+                        break
+                    overlap_pieces.insert(0, piece)
+                    overlap_length += len(piece) + len(separator)
+                
+                current_chunk_pieces = overlap_pieces
+                current_length = sum(len(p) + len(separator) for p in current_chunk_pieces)
+
+            current_chunk_pieces.append(split)
+            current_length += split_len
+        if current_chunk_pieces:
+            chunks.append(separator.join(current_chunk_pieces).strip())
+
+        return chunks
+
+    return [c.strip() for c in _split(text, 0) if c.strip()]
 
 
 def extract_pdf_pages(pdf_path: Path) -> List[Tuple[int, str]]:
