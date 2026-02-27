@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS usage_stats(
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS rag_questions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_name TEXT NOT NULL,
+  question TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 def init_db():
@@ -418,3 +425,48 @@ def get_global_overview():
             "avg_metrics": {r["metric_name"]: r["val"] for r in avg_metrics},
             "students": [dict(s) for s in students]
         }
+
+
+def save_rag_questions(source_name: str, questions: list) -> int:
+    with db() as con:
+        for q in questions:
+            q_text = (q or "").strip()
+            if q_text:
+                con.execute(
+                    "INSERT INTO rag_questions(source_name, question) VALUES(?,?)",
+                    (source_name, q_text)
+                )
+        return len(questions)
+
+
+def get_rag_questions(source_name: str) -> list:
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, question, created_at FROM rag_questions WHERE source_name=? ORDER BY id",
+            (source_name,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_rag_questions(source_name: str) -> int:
+    with db() as con:
+        cur = con.execute("DELETE FROM rag_questions WHERE source_name=?", (source_name,))
+        return cur.rowcount
+
+
+def get_quiz_questions(limit: int = 3) -> list:
+    """Devuelve `limit` preguntas aleatorias, cada una de un source_name distinto."""
+    with db() as con:
+        rows = con.execute("""
+            WITH one_per_source AS (
+                SELECT id, source_name, question, created_at,
+                       ROW_NUMBER() OVER (PARTITION BY source_name ORDER BY RANDOM()) AS rn
+                FROM rag_questions
+            )
+            SELECT id, source_name, question, created_at
+            FROM one_per_source
+            WHERE rn = 1
+            ORDER BY RANDOM()
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]

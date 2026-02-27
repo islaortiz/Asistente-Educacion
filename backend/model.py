@@ -127,6 +127,83 @@ def generate_feedback(original: str, corrected: str) -> str:
     return _generate_raw_prompt(prompt, max_new_tokens=300)
 
 
+PROMPT_QUESTIONS = """<s>[INST] <<SYS>>
+Eres un profesor experto en educación que crea preguntas de examen.
+
+Tu tarea es generar exactamente 5 preguntas teóricas a partir del contenido del siguiente documento.
+
+REGLAS OBLIGATORIAS:
+- Genera exactamente 5 preguntas, numeradas del 1 al 5.
+- Las preguntas deben ser de tipo teórico (comprensión, análisis, síntesis).
+- Cada pregunta debe poder responderse con la información del documento.
+- Las preguntas deben cubrir diferentes aspectos del contenido.
+- Usa un lenguaje claro, formal y académico.
+- No incluyas las respuestas, solo las preguntas.
+- Formato: cada pregunta en una línea nueva, comenzando con el número seguido de un punto.
+
+<</SYS>>
+
+Contenido del documento:
+[DOCUMENTO]
+
+Genera 5 preguntas teóricas:
+[/INST]"""
+
+
+def generate_questions(document_text: str) -> str:
+    if not MODEL_LOADED:
+        return ""
+
+    # Truncar si es muy largo para caber en el contexto del modelo
+    max_chars = 3000
+    text = document_text.strip()
+    if len(text) > max_chars:
+        text = text[:max_chars] + "..."
+
+    prompt = PROMPT_QUESTIONS.replace("[DOCUMENTO]", text)
+    return _generate_raw_prompt(prompt, max_new_tokens=512)
+
+
+PROMPT_CORRECT_QUIZ = """<s>[INST] <<SYS>>
+Eres un profesor experto que corrige respuestas de exámenes teóricos.
+
+Tu tarea es evaluar la respuesta del alumno comparándola con el contexto de referencia.
+
+FORMATO DE RESPUESTA OBLIGATORIO (usa exactamente estas etiquetas):
+
+EVALUACIÓN: [CORRECTA / PARCIALMENTE CORRECTA / INCORRECTA]
+CORRECCIÓN: [Tu explicación detallada de qué está bien, qué falta o es erróneo, y la respuesta ideal]
+CITA RELEVANTE: [Copia TEXTUALMENTE solo las frases completas del contexto que son necesarias para responder la pregunta. No cortes frases a la mitad. Solo incluye oraciones completas relevantes.]
+
+REGLAS:
+- Sé constructivo y educativo.
+- Responde siempre en español.
+- En CITA RELEVANTE incluye SOLO frases completas y relevantes del contexto, nunca frases cortadas.
+
+<</SYS>>
+
+PREGUNTA: [PREGUNTA]
+
+RESPUESTA DEL ALUMNO: [RESPUESTA]
+
+CONTEXTO DE REFERENCIA (del documento): [CONTEXTO]
+
+Evalúa la respuesta:
+[/INST]"""
+
+
+def correct_quiz_answer(question: str, answer: str, context: str) -> str:
+    if not MODEL_LOADED:
+        return ""
+
+    prompt = PROMPT_CORRECT_QUIZ \
+        .replace("[PREGUNTA]", question.strip()) \
+        .replace("[RESPUESTA]", answer.strip()) \
+        .replace("[CONTEXTO]", context.strip()[:2000])
+
+    return _generate_raw_prompt(prompt, max_new_tokens=512)
+
+
 def _set(progress: int, message: str):
     global LOAD_PROGRESS, LOAD_MESSAGE
     with _lock:

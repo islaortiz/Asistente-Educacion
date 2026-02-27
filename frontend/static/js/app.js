@@ -56,6 +56,10 @@ const dom = {
 		ragProcessBtn: document.getElementById('rag-process-btn'),
 		ragHistoryRefreshBtn: document.getElementById('rag-refresh-history-btn'),
 		ragHistoryList: document.getElementById('rag-history-list'),
+		ragQuestionsPanel: document.getElementById('rag-questions-panel'),
+		ragQuestionsSource: document.getElementById('rag-questions-source'),
+		ragQuestionsList: document.getElementById('rag-questions-list'),
+		ragQuestionsClose: document.getElementById('rag-questions-close'),
 		tableBody: document.querySelector('#students-table tbody'),
 		kpis: {
 			students: document.getElementById('prof-total-students'),
@@ -221,6 +225,34 @@ function setupEventListeners() {
 	if (dom.prof.ragHistoryRefreshBtn) {
 		dom.prof.ragHistoryRefreshBtn.addEventListener('click', loadRagHistory);
 	}
+	if (dom.prof.ragQuestionsClose) {
+		dom.prof.ragQuestionsClose.addEventListener('click', () => {
+			if (dom.prof.ragQuestionsPanel) dom.prof.ragQuestionsPanel.classList.add('hidden');
+		});
+	}
+
+	// Student Sidebar Navigation
+	document.querySelectorAll('.sidebar-item[data-student-view]').forEach(btn => {
+		btn.addEventListener('click', () => {
+			// Update sidebar buttons
+			document.querySelectorAll('.sidebar-item').forEach(b => b.classList.remove('active'));
+			btn.classList.add('active');
+
+			// Switch subview
+			const targetId = btn.dataset.studentView;
+			document.querySelectorAll('.student-subview').forEach(sv => {
+				sv.classList.remove('active');
+			});
+			const target = document.getElementById(targetId);
+			if (target) target.classList.add('active');
+		});
+	});
+
+	// Quiz button
+	const quizBtn = document.getElementById('generate-quiz-btn');
+	if (quizBtn) {
+		quizBtn.addEventListener('click', generateQuiz);
+	}
 }
 
 // --- AUTH LOGIC ---
@@ -361,10 +393,10 @@ async function loadStudentHistory() {
 	try {
 		const res = await fetch(`/users/${state.user}/documents`);
 		const data = await res.json();
-		
+
 		const historyList = document.getElementById('history-list');
 		if (!historyList) return;
-		
+
 		if (data.documents && data.documents.length > 0) {
 			const historyHtml = data.documents.map(doc => `
 				<div class="history-item" onclick="loadDocument(${doc.id})">
@@ -372,7 +404,7 @@ async function loadStudentHistory() {
 					<span class="history-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')}</span>
 				</div>
 			`).join('');
-			
+
 			historyList.innerHTML = historyHtml;
 		} else {
 			historyList.innerHTML = '<p class="text-muted">No hay análisis anteriores</p>';
@@ -392,7 +424,7 @@ async function loadDocument(docId) {
 	try {
 		const res = await fetch(`/documents/${docId}`);
 		const data = await res.json();
-		
+
 		if (data.doc_id) {
 			renderResults(data);
 		}
@@ -440,14 +472,14 @@ async function processFile() {
 		fd.append('username', state.user);
 
 		const res = await fetch('/process/', { method: 'POST', body: fd });
-		
+
 		if (!res.ok) {
 			const errorData = await res.json().catch(() => ({}));
 			console.error('Error del servidor:', res.status, errorData);
 			alert(`Error al procesar el archivo (${res.status}): ${errorData.detail || 'Error desconocido'}`);
 			return;
 		}
-		
+
 		const data = await res.json();
 
 		if (data.doc_id) {
@@ -481,14 +513,14 @@ async function processText() {
 		fd.append('text', text);
 
 		const res = await fetch('/process_text/', { method: 'POST', body: fd });
-		
+
 		if (!res.ok) {
 			const errorData = await res.json().catch(() => ({}));
 			console.error('Error del servidor:', res.status, errorData);
 			alert(`Error al procesar el texto (${res.status}): ${errorData.detail || 'Error desconocido'}`);
 			return;
 		}
-		
+
 		const data = await res.json();
 
 		if (data.doc_id) {
@@ -704,7 +736,10 @@ async function loadRagHistory() {
 						<span class="rag-history-source">${escapeHtml(source)}</span>
 						<span class="rag-history-detail">${chunkCount} chunks • ${escapeHtml(uploadedAt)}</span>
 					</div>
-					<button class="btn btn-danger btn-sm" data-rag-delete="${encodedSource}">Eliminar</button>
+					<div class="rag-history-actions">
+						<button class="btn btn-primary btn-sm" data-rag-questions="${encodedSource}">📝 Preguntas</button>
+						<button class="btn btn-danger btn-sm" data-rag-delete="${encodedSource}">Eliminar</button>
+					</div>
 				</div>
 			`;
 		}).join('');
@@ -713,6 +748,13 @@ async function loadRagHistory() {
 			btn.addEventListener('click', async () => {
 				const source = decodeURIComponent(btn.dataset.ragDelete || '');
 				await deleteRagDocument(source);
+			});
+		});
+
+		dom.prof.ragHistoryList.querySelectorAll('[data-rag-questions]').forEach(btn => {
+			btn.addEventListener('click', async () => {
+				const source = decodeURIComponent(btn.dataset.ragQuestions || '');
+				await showRagQuestions(source);
 			});
 		});
 	} catch (err) {
@@ -743,6 +785,219 @@ async function deleteRagDocument(sourceName) {
 		alert('Error de conexion al eliminar.');
 	} finally {
 		showLoader(false);
+	}
+}
+
+// --- RAG QUESTIONS ---
+async function showRagQuestions(sourceName) {
+	if (!sourceName || !state.user) return;
+
+	const panel = dom.prof.ragQuestionsPanel;
+	const list = dom.prof.ragQuestionsList;
+	const sourceLabel = dom.prof.ragQuestionsSource;
+	if (!panel || !list) return;
+
+	sourceLabel.textContent = sourceName;
+	panel.classList.remove('hidden');
+	list.innerHTML = '<p class="text-muted">Buscando preguntas guardadas...</p>';
+
+	try {
+		// Primero intentar cargar preguntas existentes
+		const getUrl = `/rag/documents/${encodeURIComponent(sourceName)}/questions?username=${encodeURIComponent(state.user)}`;
+		const getRes = await fetch(getUrl);
+		const getData = await getRes.json().catch(() => ({}));
+
+		if (getRes.ok && getData.questions && getData.questions.length > 0) {
+			renderRagQuestions(getData.questions, sourceName);
+			return;
+		}
+
+		// No hay preguntas guardadas, generar nuevas
+		await generateRagQuestions(sourceName);
+	} catch (err) {
+		console.error('Error mostrando preguntas RAG:', err);
+		list.innerHTML = '<p class="text-muted">Error al cargar las preguntas.</p>';
+	}
+}
+
+async function generateRagQuestions(sourceName) {
+	const list = dom.prof.ragQuestionsList;
+	if (!list) return;
+
+	list.innerHTML = '<p class="text-muted">⏳ Generando preguntas con el LLM... Esto puede tardar unos segundos.</p>';
+
+	try {
+		const url = `/rag/documents/${encodeURIComponent(sourceName)}/questions?username=${encodeURIComponent(state.user)}`;
+		const res = await fetch(url, { method: 'POST' });
+		const data = await res.json().catch(() => ({}));
+
+		if (!res.ok) {
+			list.innerHTML = `<p class="text-muted">❌ ${escapeHtml(data.detail || 'No se pudieron generar las preguntas.')}</p>`;
+			return;
+		}
+
+		if (data.questions && data.questions.length > 0) {
+			renderRagQuestions(data.questions, sourceName);
+		} else {
+			list.innerHTML = '<p class="text-muted">No se generaron preguntas.</p>';
+		}
+	} catch (err) {
+		console.error('Error generando preguntas:', err);
+		list.innerHTML = '<p class="text-muted">Error de conexión al generar preguntas.</p>';
+	}
+}
+
+function renderRagQuestions(questions, sourceName) {
+	const list = dom.prof.ragQuestionsList;
+	if (!list) return;
+
+	const questionsHtml = questions.map((q, i) => {
+		const text = q.question || q;
+		return `<div class="rag-question-item"><span class="rag-question-number">${i + 1}</span><span class="rag-question-text">${escapeHtml(text)}</span></div>`;
+	}).join('');
+
+	list.innerHTML = `
+		${questionsHtml}
+		<button class="btn btn-secondary btn-sm rag-regenerate-btn" id="rag-regenerate-btn">🔄 Regenerar Preguntas</button>
+	`;
+
+	const regenBtn = document.getElementById('rag-regenerate-btn');
+	if (regenBtn) {
+		regenBtn.addEventListener('click', () => generateRagQuestions(sourceName));
+	}
+}
+
+// --- AUTOEVALUACIÓN / QUIZ ---
+async function generateQuiz() {
+	const resultsEl = document.getElementById('quiz-results');
+	if (!resultsEl) return;
+
+	resultsEl.classList.remove('hidden');
+	resultsEl.innerHTML = '<p class="text-muted">⏳ Cargando preguntas...</p>';
+
+	try {
+		const res = await fetch('/rag/quiz');
+		const data = await res.json().catch(() => ({}));
+
+		if (!res.ok) {
+			resultsEl.innerHTML = `<p class="text-muted">❌ ${escapeHtml(data.detail || 'No se pudieron cargar las preguntas.')}</p>`;
+			return;
+		}
+
+		const questions = Array.isArray(data.questions) ? data.questions : [];
+		if (!questions.length) {
+			resultsEl.innerHTML = '<p class="text-muted">No hay preguntas disponibles. El profesor debe generar preguntas desde la Base Vectorial.</p>';
+			return;
+		}
+
+		renderQuiz(questions);
+	} catch (err) {
+		console.error('Error generando quiz:', err);
+		resultsEl.innerHTML = '<p class="text-muted">Error de conexión.</p>';
+	}
+}
+
+function renderQuiz(questions) {
+	const resultsEl = document.getElementById('quiz-results');
+	if (!resultsEl) return;
+
+	const cardsHtml = questions.map((q, i) => {
+		const source = q.source_name || 'Documento';
+		const text = q.question || '';
+		const qId = q.id || i;
+		return `
+			<div class="quiz-card" id="quiz-card-${qId}">
+				<div class="quiz-card-header">
+					<span class="quiz-card-number">${i + 1}</span>
+					<span class="quiz-card-source">📄 ${escapeHtml(source)}</span>
+				</div>
+				<p class="quiz-card-question">${escapeHtml(text)}</p>
+				<textarea class="quiz-answer" id="quiz-answer-${qId}" placeholder="Escribe tu respuesta aquí..."></textarea>
+				<button class="btn btn-primary btn-sm quiz-correct-btn"
+					data-question-id="${qId}"
+					data-source="${escapeHtml(source)}"
+					data-question="${escapeHtml(text)}">✅ Corregir</button>
+				<div class="quiz-correction-result hidden" id="quiz-result-${qId}"></div>
+			</div>
+		`;
+	}).join('');
+
+	resultsEl.innerHTML = `
+		<h3 class="section-title">Tu Autoevaluación <span class="quiz-count">${questions.length} pregunta${questions.length > 1 ? 's' : ''}</span></h3>
+		${cardsHtml}
+		<button class="btn btn-secondary" id="quiz-regenerate-btn">🔄 Generar Nuevas Preguntas</button>
+	`;
+
+	const regenBtn = document.getElementById('quiz-regenerate-btn');
+	if (regenBtn) {
+		regenBtn.addEventListener('click', generateQuiz);
+	}
+
+	// Botones Corregir
+	resultsEl.querySelectorAll('.quiz-correct-btn').forEach(btn => {
+		btn.addEventListener('click', () => correctQuizAnswer(btn));
+	});
+}
+
+async function correctQuizAnswer(btn) {
+	const qId = btn.dataset.questionId;
+	const question = btn.dataset.question;
+	const source = btn.dataset.source;
+	const answerEl = document.getElementById(`quiz-answer-${qId}`);
+	const resultEl = document.getElementById(`quiz-result-${qId}`);
+
+	if (!answerEl || !answerEl.value.trim()) {
+		alert('Escribe una respuesta antes de corregir.');
+		return;
+	}
+
+	if (!resultEl) return;
+
+	// Mostrar loading
+	btn.disabled = true;
+	btn.textContent = '⏳ Corrigiendo...';
+	resultEl.classList.remove('hidden');
+	resultEl.innerHTML = '<p class="text-muted">⏳ Consultando la base de conocimientos y generando corrección...</p>';
+
+	try {
+		const fd = new FormData();
+		fd.append('question', question);
+		fd.append('answer', answerEl.value.trim());
+		fd.append('source_name', source);
+
+		const res = await fetch('/rag/quiz/correct', { method: 'POST', body: fd });
+		const data = await res.json().catch(() => ({}));
+
+		if (!res.ok) {
+			resultEl.innerHTML = `<p class="text-muted">❌ ${escapeHtml(data.detail || 'No se pudo corregir.')}</p>`;
+			return;
+		}
+
+		// Renderizar corrección
+		const evaluationBadge = data.evaluation ? `<span class="correction-badge">${escapeHtml(data.evaluation)}</span>` : '';
+		const correctionHtml = (data.correction || '').replace(/\n/g, '<br>');
+		const relevantCtx = data.relevant_context || '';
+
+		resultEl.innerHTML = `
+			<div class="correction-section">
+				<h4 class="correction-title">📋 Corrección ${evaluationBadge}</h4>
+				<div class="correction-text">${correctionHtml}</div>
+			</div>
+			<div class="correction-section correction-context">
+				<h4 class="correction-title">📖 Contexto de Referencia</h4>
+				<p class="correction-context-text">${escapeHtml(relevantCtx)}</p>
+			</div>
+			<div class="correction-section correction-reference">
+				<span class="correction-ref-icon">📄</span>
+				<span>Documento: <strong>${escapeHtml(data.source || source)}</strong> — Página ${data.page || '?'}</span>
+			</div>
+		`;
+	} catch (err) {
+		console.error('Error corrigiendo quiz:', err);
+		resultEl.innerHTML = '<p class="text-muted">Error de conexión.</p>';
+	} finally {
+		btn.disabled = false;
+		btn.textContent = '✅ Corregir';
 	}
 }
 
@@ -823,9 +1078,9 @@ async function loadStudentDocuments(username) {
 	try {
 		const res = await fetch(`/professor/students/${username}/documents`);
 		const data = await res.json();
-		
+
 		dom.prof.selectedStudentName.textContent = username;
-		
+
 		if (data.documents && data.documents.length > 0) {
 			const docsHtml = data.documents.map(doc => `
 				<div class="doc-item" onclick="viewDocumentDetail(${doc.id})">
@@ -833,12 +1088,12 @@ async function loadStudentDocuments(username) {
 					<div class="doc-item-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')} - ${doc.metricas.total_frases || 0} frases</div>
 				</div>
 			`).join('');
-			
+
 			dom.prof.docsList.innerHTML = docsHtml;
 		} else {
 			dom.prof.docsList.innerHTML = '<p class="text-muted">Este alumno no tiene documentos.</p>';
 		}
-		
+
 		dom.prof.docsContainer.classList.remove('hidden');
 	} catch (err) {
 		console.error('Error cargando documentos:', err);
@@ -856,11 +1111,11 @@ async function viewDocumentDetail(docId) {
 	try {
 		const res = await fetch(`/documents/${docId}`);
 		const data = await res.json();
-		
+
 		if (data.doc_id) {
 			// Guarda el estudiante para volver después
 			closeStudentDocs();
-			
+
 			// Muestra los resultados como si fuera del estudiante
 			renderResults(data);
 		}

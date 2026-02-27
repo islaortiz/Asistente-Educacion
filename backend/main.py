@@ -16,14 +16,20 @@ from backend.rag.ingest import (
     delete_indexed_source,
     ingest_pdf_bytes,
     list_indexed_sources,
+    extract_pdf_pages,
+    retrieve_chunks,
+    DEFAULT_INPUT_DIR,
 )
 from backend.db import (
     init_db, user_exists, create_user, get_user_id, get_user_role,
     record_usage, create_document, insert_metric,
     get_user_overview, get_user_documents, get_document_metrics,
     sanitize_username, delete_document, record_login_ts,
-    close_open_session, get_user_weekly_activity, get_global_overview
+    close_open_session, get_user_weekly_activity, get_global_overview,
+    save_rag_questions, get_rag_questions, delete_rag_questions,
+    get_quiz_questions
 )
+import re
 
 app = FastAPI(title="PALABRIA Backend")
 
@@ -372,8 +378,160 @@ def rag_delete_document(source_name: str, username: str):
     if not result["deleted"]:
         raise HTTPException(status_code=404, detail="Archivo no encontrado en la BBDD vectorial.")
 
+    # Eliminar preguntas asociadas
+    delete_rag_questions(source_name)
+
     record_usage(uid, "rag_pdf_deleted", None)
     return {"ok": True, **result}
+
+
+@app.post("/rag/documents/{source_name}/questions")
+def rag_generate_questions(source_name: str, username: str):
+    """Genera 5 preguntas teóricas a partir del PDF indexado."""
+    require_professor_user(username)
+
+    # Leer el PDF desde disco
+    pdf_path = DEFAULT_INPUT_DIR / source_name
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"PDF '{source_name}' no encontrado en disco.")
+
+    if not model.MODEL_LOADED:
+        raise HTTPException(status_code=503, detail="El modelo LLM aún no está cargado. Espera a que termine de cargar.")
+
+    # Extraer texto del PDF
+    pages = extract_pdf_pages(pdf_path)
+    full_text = "\n".join(text for _, text in pages)
+    if not full_text.strip():
+        raise HTTPException(status_code=400, detail="No se pudo extraer texto del PDF.")
+
+    # Generar preguntas con el LLM
+    raw_output = model.generate_questions(full_text)
+    if not raw_output:
+        raise HTTPException(status_code=500, detail="El modelo no generó preguntas.")
+
+    # Parsear preguntas (líneas que empiezan con un número)
+    lines = raw_output.strip().split("\n")
+    questions = []
+    for line in lines:
+        line = line.strip()
+        if re.match(r'^\d+\.\s+', line):
+            # Quitar el número del inicio
+            q_text = re.sub(r'^\d+\.\s*', '', line).strip()
+            if q_text:
+                questions.append(q_text)
+
+    if not questions:
+        # Fallback: usar todas las líneas no vacías
+        questions = [l.strip() for l in lines if l.strip()]
+
+    # Limitar a 5 preguntas
+    questions = questions[:5]
+
+    # Borrar preguntas anteriores y guardar las nuevas
+    delete_rag_questions(source_name)
+    save_rag_questions(source_name, questions)
+
+    return {"ok": True, "source": source_name, "questions": get_rag_questions(source_name)}
+
+
+@app.get("/rag/documents/{source_name}/questions")
+def rag_get_questions(source_name: str, username: str):
+    """Recupera las preguntas guardadas para un PDF."""
+    require_professor_user(username)
+    questions = get_rag_questions(source_name)
+    return {"source": source_name, "questions": questions}
+
+
+@app.get("/rag/quiz")
+def rag_quiz():
+    """Devuelve 1 pregunta aleatoria por cada documento RAG (para autoevaluación)."""
+    try:
+        questions = get_quiz_questions()
+        return {"questions": questions}
+    except Exception as e:
+        # La tabla puede no existir si el servidor no se reinició
+        print(f"[WARN] Error en /rag/quiz: {e}")
+        return {"questions": []}
+
+
+@app.post("/rag/quiz/correct")
+def rag_quiz_correct(
+    question: str = Form(...),
+    answer: str = Form(...),
+    source_name: str = Form(""),
+):
+    """Corrige una respuesta de autoevaluación usando RAG + LLM."""
+    if not answer.strip():
+        raise HTTPException(status_code=400, detail="La respuesta está vacía.")
+
+    if not model.MODEL_LOADED:
+        raise HTTPException(status_code=503, detail="El modelo LLM aún no está cargado.")
+
+    # 1. Recuperar el chunk más relevante del documento de origen
+    context_text = ""
+    context_source = source_name or "Documento desconocido"
+    context_page = 0
+    try:
+        chunks = retrieve_chunks(
+            query=question,
+            source_name=source_name if source_name else None,
+            n_results=1,
+        )
+        if chunks:
+            context_text = chunks[0]["text"]
+            context_source = chunks[0]["source"]
+            context_page = chunks[0]["page"]
+    except Exception as e:
+        print(f"[WARN] Error en retrieve_chunks: {e}")
+
+    if not context_text:
+        raise HTTPException(status_code=404, detail="No se encontró contexto en la base vectorial para esta pregunta.")
+
+    # 2. Generar corrección con el LLM
+    raw_output = model.correct_quiz_answer(
+        question=question,
+        answer=answer,
+        context=context_text,
+    )
+
+    if not raw_output:
+        raise HTTPException(status_code=500, detail="El modelo no generó corrección.")
+
+    # 3. Parsear la respuesta estructurada del LLM
+    evaluation = ""
+    correction = raw_output
+    relevant_context = ""
+
+    # Extraer EVALUACIÓN
+    eval_match = re.search(r'EVALUACI[ÓO]N:\s*(.+?)(?=\nCORRECCI[ÓO]N:|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+    if eval_match:
+        evaluation = eval_match.group(1).strip()
+
+    # Extraer CORRECCIÓN
+    corr_match = re.search(r'CORRECCI[ÓO]N:\s*(.+?)(?=\nCITA RELEVANTE:|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+    if corr_match:
+        correction = corr_match.group(1).strip()
+
+    # Extraer CITA RELEVANTE
+    cite_match = re.search(r'CITA RELEVANTE:\s*(.+)', raw_output, re.DOTALL | re.IGNORECASE)
+    if cite_match:
+        relevant_context = cite_match.group(1).strip()
+
+    # Fallback: si no se extrajo cita, usar contexto truncado por frases completas
+    if not relevant_context:
+        sentences = context_text.split('. ')
+        relevant_context = '. '.join(sentences[:3])
+        if not relevant_context.endswith('.'):
+            relevant_context += '.'
+
+    return {
+        "ok": True,
+        "evaluation": evaluation,
+        "correction": correction,
+        "relevant_context": relevant_context,
+        "source": context_source,
+        "page": context_page,
+    }
 
 
 

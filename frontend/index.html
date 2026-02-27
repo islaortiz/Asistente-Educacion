@@ -100,85 +100,129 @@
 
             <!-- Student Dashboard -->
             <section id="view-student" class="view hidden">
-                <div class="dashboard-header">
-                    <h2>Panel del Estudiante</h2>
-                    <div id="model-status-card" class="status-card">
-                        <span class="status-icon">⚡</span>
-                        <div class="status-info">
-                            <span id="status-text">Comprobando modelo...</span>
-                            <div class="progress-bar-container hidden">
-                                <div class="progress-bar" id="model-progress"></div>
+                <div class="student-layout">
+                    <!-- Sidebar -->
+                    <aside class="student-sidebar">
+                        <div class="sidebar-header">
+                            <span class="sidebar-logo">🎓</span>
+                            <span class="sidebar-title">Estudiante</span>
+                        </div>
+                        <nav class="sidebar-nav">
+                            <button class="sidebar-item active" data-student-view="student-corrector">
+                                <span class="sidebar-icon">✏️</span>
+                                <span>Corrector</span>
+                            </button>
+                            <button class="sidebar-item" data-student-view="student-autoevaluacion">
+                                <span class="sidebar-icon">📝</span>
+                                <span>Autoevaluación</span>
+                            </button>
+                        </nav>
+                    </aside>
+
+                    <!-- Main Content Area -->
+                    <div class="student-content">
+                        <!-- Corrector Sub-view (existing content) -->
+                        <div id="student-corrector" class="student-subview active">
+                            <div class="dashboard-header">
+                                <h2>Corrector de Textos</h2>
+                                <div id="model-status-card" class="status-card">
+                                    <span class="status-icon">⚡</span>
+                                    <div class="status-info">
+                                        <span id="status-text">Comprobando modelo...</span>
+                                        <div class="progress-bar-container hidden">
+                                            <div class="progress-bar" id="model-progress"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="content-grid">
+                                <!-- Upload Section -->
+                                <div class="card upload-section">
+                                    <h3>Subir Documento</h3>
+                                    <div class="upload-area" id="drop-zone">
+                                        <div class="icon">📄</div>
+                                        <p>Arrastra tu PDF aquí o haz clic para subir</p>
+                                        <input type="file" id="file-input" accept=".pdf" hidden>
+                                    </div>
+                                    <div id="upload-preview" class="hidden">
+                                        <span id="file-name">archivo.pdf</span>
+                                        <button id="cancel-upload" class="btn-text">✕</button>
+                                    </div>
+                                    <button id="process-btn" class="btn btn-primary full-width" disabled>Analizar
+                                        Documento</button>
+                                </div>
+
+                                <!-- Input Text Section -->
+                                <div class="card text-input-section">
+                                    <h3>O escribe tu texto</h3>
+                                    <textarea id="text-input" placeholder="Escribe o pega tu texto aquí..."></textarea>
+                                    <button id="process-text-btn" class="btn btn-secondary full-width">Analizar
+                                        Texto</button>
+                                </div>
+                            </div>
+
+                            <!-- Usage Chart -->
+                            <div class="card chart-card">
+                                <h3>Tu Actividad Semanal</h3>
+                                <canvas id="studentUsageChart"></canvas>
+                            </div>
+
+                            <!-- History Section -->
+                            <div class="card history-card">
+                                <h3>Análisis Anteriores</h3>
+                                <div id="history-list" class="history-list">
+                                    <p class="text-muted">Cargando historial...</p>
+                                </div>
+                            </div>
+
+                            <!-- Analysis Results (Hidden by default) -->
+                            <div id="analysis-results" class="hidden">
+                                <h3 class="section-title">Resultados del Análisis</h3>
+
+                                <div class="kpi-grid">
+                                    <div class="kpi-card">
+                                        <span class="kpi-label">Frases Totales</span>
+                                        <span class="kpi-value" id="kpi-sentences">-</span>
+                                    </div>
+                                    <div class="kpi-card warning">
+                                        <span class="kpi-label">Errores 'Tú'</span>
+                                        <span class="kpi-value" id="kpi-errors">-</span>
+                                    </div>
+                                    <div class="kpi-card info">
+                                        <span class="kpi-label">Cambios Propuestos</span>
+                                        <span class="kpi-value" id="kpi-changes">-</span>
+                                    </div>
+                                </div>
+
+                                <div class="tabs result-tabs">
+                                    <button class="tab-btn active" data-target="tab-feedback">Feedback General</button>
+                                    <button class="tab-btn" data-target="tab-corrected">Texto Corregido</button>
+                                    <button class="tab-btn" data-target="tab-original">Original</button>
+                                </div>
+
+                                <div id="tab-feedback" class="tab-content active code-block"></div>
+                                <div id="tab-corrected" class="tab-content code-block"></div>
+                                <div id="tab-original" class="tab-content code-block"></div>
+                            </div>
+                        </div>
+
+                        <!-- Autoevaluación Sub-view -->
+                        <div id="student-autoevaluacion" class="student-subview">
+                            <div class="dashboard-header">
+                                <h2>Autoevaluación</h2>
+                            </div>
+                            <div class="card quiz-intro-card">
+                                <div class="quiz-intro-icon">📝</div>
+                                <h3>Pon a prueba tus conocimientos</h3>
+                                <p class="text-muted">Se seleccionará una pregunta aleatoria de cada documento
+                                    disponible en la base de conocimientos.</p>
+                                <button id="generate-quiz-btn" class="btn btn-primary">Generar Autoevaluación</button>
+                            </div>
+                            <div id="quiz-results" class="quiz-results hidden">
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <div class="content-grid">
-                    <!-- Upload Section -->
-                    <div class="card upload-section">
-                        <h3>Subir Documento</h3>
-                        <div class="upload-area" id="drop-zone">
-                            <div class="icon">📄</div>
-                            <p>Arrastra tu PDF aquí o haz clic para subir</p>
-                            <input type="file" id="file-input" accept=".pdf" hidden>
-                        </div>
-                        <div id="upload-preview" class="hidden">
-                            <span id="file-name">archivo.pdf</span>
-                            <button id="cancel-upload" class="btn-text">✕</button>
-                        </div>
-                        <button id="process-btn" class="btn btn-primary full-width" disabled>Analizar Documento</button>
-                    </div>
-
-                    <!-- Input Text Section -->
-                    <div class="card text-input-section">
-                        <h3>O escribe tu texto</h3>
-                        <textarea id="text-input" placeholder="Escribe o pega tu texto aquí..."></textarea>
-                        <button id="process-text-btn" class="btn btn-secondary full-width">Analizar Texto</button>
-                    </div>
-                </div>
-
-                <!-- Usage Chart -->
-                <div class="card chart-card">
-                    <h3>Tu Actividad Semanal</h3>
-                    <canvas id="studentUsageChart"></canvas>
-                </div>
-
-                <!-- History Section -->
-                <div class="card history-card">
-                    <h3>Análisis Anteriores</h3>
-                    <div id="history-list" class="history-list">
-                        <p class="text-muted">Cargando historial...</p>
-                    </div>
-                </div>
-
-                <!-- Analysis Results (Hidden by default) -->
-                <div id="analysis-results" class="hidden">
-                    <h3 class="section-title">Resultados del Análisis</h3>
-
-                    <div class="kpi-grid">
-                        <div class="kpi-card">
-                            <span class="kpi-label">Frases Totales</span>
-                            <span class="kpi-value" id="kpi-sentences">-</span>
-                        </div>
-                        <div class="kpi-card warning">
-                            <span class="kpi-label">Errores 'Tú'</span>
-                            <span class="kpi-value" id="kpi-errors">-</span>
-                        </div>
-                        <div class="kpi-card info">
-                            <span class="kpi-label">Cambios Propuestos</span>
-                            <span class="kpi-value" id="kpi-changes">-</span>
-                        </div>
-                    </div>
-
-                    <div class="tabs result-tabs">
-                        <button class="tab-btn active" data-target="tab-feedback">Feedback General</button>
-                        <button class="tab-btn" data-target="tab-corrected">Texto Corregido</button>
-                        <button class="tab-btn" data-target="tab-original">Original</button>
-                    </div>
-
-                    <div id="tab-feedback" class="tab-content active code-block"></div>
-                    <div id="tab-corrected" class="tab-content code-block"></div>
-                    <div id="tab-original" class="tab-content code-block"></div>
                 </div>
             </section>
 
@@ -236,7 +280,8 @@
                 <div id="student-docs-container" class="hidden">
                     <div class="card">
                         <h3>Documentos de <span id="selected-student-name">Alumno</span></h3>
-                        <button onclick="closeStudentDocs()" class="btn btn-secondary" style="float:right;">Cerrar</button>
+                        <button onclick="closeStudentDocs()" class="btn btn-secondary"
+                            style="float:right;">Cerrar</button>
                         <div style="clear:both;"></div>
                         <div id="student-docs-list" class="docs-list">
                             <!-- Populated by JS -->
@@ -263,7 +308,8 @@
                                 <button id="rag-cancel-upload" class="btn-text">x</button>
                             </div>
 
-                            <button id="rag-process-btn" class="btn btn-primary full-width" disabled>Procesar PDF</button>
+                            <button id="rag-process-btn" class="btn btn-primary full-width" disabled>Procesar
+                                PDF</button>
 
                             <div class="rag-history-header">
                                 <h4>Historial de PDFs indexados</h4>
@@ -272,6 +318,15 @@
 
                             <div id="rag-history-list" class="rag-history-list">
                                 <p class="text-muted">Cargando historial...</p>
+                            </div>
+
+                            <div id="rag-questions-panel" class="rag-questions-panel hidden">
+                                <div class="rag-questions-header">
+                                    <h4>Preguntas Teóricas: <span id="rag-questions-source"></span></h4>
+                                    <button id="rag-questions-close" class="btn-text">✕</button>
+                                </div>
+                                <div id="rag-questions-list" class="rag-questions-list">
+                                </div>
                             </div>
                         </div>
                     </div>
