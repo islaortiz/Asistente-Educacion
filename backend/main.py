@@ -27,7 +27,7 @@ from backend.db import (
     sanitize_username, delete_document, record_login_ts,
     close_open_session, get_user_weekly_activity, get_global_overview,
     save_rag_questions, get_rag_questions, delete_rag_questions,
-    get_quiz_questions
+    get_quiz_questions, save_quiz_correction, get_user_quiz_corrections
 )
 import re
 
@@ -459,6 +459,7 @@ def rag_quiz_correct(
     question: str = Form(...),
     answer: str = Form(...),
     source_name: str = Form(""),
+    username: str = Form(None),
 ):
     """Corrige una respuesta de autoevaluación usando RAG + LLM."""
     if not answer.strip():
@@ -524,6 +525,17 @@ def rag_quiz_correct(
         if not relevant_context.endswith('.'):
             relevant_context += '.'
 
+    # Persist correction if username provided
+    if username:
+        try:
+            uname = sanitize_username(username)
+            uid = get_user_id(uname)
+            if uid is not None:
+                # Save to DB (best-effort)
+                save_quiz_correction(uid, question, answer, evaluation, correction, context_source, str(context_page))
+        except Exception as e:
+            print(f"[WARN] No se pudo guardar la corrección de quiz: {e}")
+
     return {
         "ok": True,
         "evaluation": evaluation,
@@ -532,6 +544,7 @@ def rag_quiz_correct(
         "source": context_source,
         "page": context_page,
     }
+
 
 
 
@@ -579,6 +592,72 @@ def professor_student_documents(username: str):
                 })
             
             return {"username": username, "documents": documents}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/{username}/corrections")
+def student_own_corrections(username: str):
+    """Obtener correcciones de autoevaluación (quiz) guardadas por un estudiante."""
+    try:
+        corrections = get_user_quiz_corrections(username)
+        return {"username": username, "corrections": corrections}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/student/{username}/documents")
+def student_own_documents(username: str):
+    """Obtener todos los documentos propios del estudiante"""
+    from backend.db import db  # Local import to prevent circular dependency
+    try:
+        username = sanitize_username(username)
+        uid = get_user_id(username)
+        if uid is None:
+            raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+        
+        with db() as con:
+            docs = con.execute(
+                """SELECT id, filename, uploaded_at, original_text, corrected_text, feedback 
+                   FROM documents WHERE user_id=? ORDER BY uploaded_at DESC""",
+                (uid,)
+            ).fetchall()
+            
+            documents = []
+            for doc in docs:
+                metrics = con.execute(
+                    "SELECT metric_name, metric_value FROM metrics WHERE document_id=?",
+                    (doc["id"],)
+                ).fetchall()
+                
+                metricas = {m["metric_name"]: m["metric_value"] for m in metrics}
+                
+                documents.append({
+                    "id": doc["id"],
+                    "filename": doc["filename"],
+                    "uploaded_at": doc["uploaded_at"],
+                    "original_text": doc["original_text"] or "",
+                    "corrected": doc["corrected_text"] or "",
+                    "feedback": doc["feedback"] or "",
+                    "metricas": metricas
+                })
+            
+            return {"username": username, "documents": documents}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/students/{username}/corrections")
+def professor_student_corrections(username: str):
+    """Obtener correcciones de autoevaluación (quiz) guardadas por un estudiante."""
+    try:
+        corrections = get_user_quiz_corrections(username)
+        return {"username": username, "corrections": corrections}
     except HTTPException:
         raise
     except Exception as e:

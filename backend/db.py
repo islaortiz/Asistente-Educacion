@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS rag_questions(
   question TEXT NOT NULL,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS quiz_corrections(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    question TEXT,
+    answer TEXT,
+    evaluation TEXT,
+    correction TEXT,
+    source TEXT,
+    page TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
 """
 
 def init_db():
@@ -409,25 +422,71 @@ def get_global_overview():
             GROUP BY metric_name
         """).fetchall()
         
-        # 3. Lista de Alumnos con actividad
+        # 3. Sumas Globales de Métricas (Total Frases, Errores y Cambios)
+        sum_metrics = con.execute("""
+            SELECT 
+                SUM(CASE WHEN metric_name='total_frases' THEN metric_value ELSE 0 END) as total_sentences,
+                SUM(CASE WHEN metric_name='frases_con_tu_impersonal' THEN metric_value ELSE 0 END) as total_errors,
+                SUM(CASE WHEN metric_name='cambios_realizados_usuario' THEN metric_value ELSE 0 END) as total_changes
+            FROM metrics
+        """).fetchone()
+
+        # 4. Estadísticas de Autoevaluación/Quizzes
+        quiz_stats = con.execute("""
+            SELECT 
+                COUNT(*) as total_quizzes,
+                SUM(CASE WHEN LOWER(evaluation) LIKE '%correct%' OR LOWER(evaluation) LIKE '%correcta%' THEN 1 ELSE 0 END) as correct_quizzes
+            FROM quiz_corrections
+        """).fetchone()
+
+        # 5. Lista de Alumnos con actividad extendida y errores totales
         students = con.execute("""
-            SELECT u.username, COUNT(d.id) as docs_count, MAX(d.uploaded_at) as last_upload
+            WITH user_errors AS (
+                SELECT d.user_id, SUM(m.metric_value) as errors
+                FROM documents d
+                JOIN metrics m ON d.id = m.document_id
+                WHERE m.metric_name = 'frases_con_tu_impersonal'
+                GROUP BY d.user_id
+            )
+            SELECT 
+                u.username, 
+                COUNT(DISTINCT d.id) as docs_count, 
+                COUNT(DISTINCT qc.id) as quizzes_count,
+                COALESCE(ue.errors, 0) as total_errors,
+                MAX(COALESCE(d.uploaded_at, qc.created_at)) as last_upload
             FROM users u
             LEFT JOIN documents d ON u.id = d.user_id
+            LEFT JOIN quiz_corrections qc ON u.id = qc.user_id
+            LEFT JOIN user_errors ue ON u.id = ue.user_id
             WHERE u.role = 'student'
             GROUP BY u.id
             ORDER BY last_upload DESC
         """).fetchall()
 
+        total_q = int(quiz_stats["total_quizzes"]) if quiz_stats and quiz_stats["total_quizzes"] else 0
+        correct_q = int(quiz_stats["correct_quizzes"]) if quiz_stats and quiz_stats["correct_quizzes"] else 0
+        
+        quiz_score_percent = 0.0
+        if total_q > 0:
+            quiz_score_percent = float(f"{(correct_q / total_q) * 100.0:.1f}")
+
         return {
             "total_students": row_stats["total_students"],
             "total_docs": row_stats["total_docs"],
+            "total_sentences": int(sum_metrics["total_sentences"] or 0),
+            "total_errors": int(sum_metrics["total_errors"] or 0),
+            "total_changes": int(sum_metrics["total_changes"] or 0),
+            "total_quizzes": total_q,
+            "quiz_score_percent": quiz_score_percent,
             "avg_metrics": {r["metric_name"]: r["val"] for r in avg_metrics},
             "students": [dict(s) for s in students]
         }
 
 
+from urllib.parse import unquote
+
 def save_rag_questions(source_name: str, questions: list) -> int:
+    source_name = unquote(source_name)
     with db() as con:
         for q in questions:
             q_text = (q or "").strip()
@@ -440,6 +499,7 @@ def save_rag_questions(source_name: str, questions: list) -> int:
 
 
 def get_rag_questions(source_name: str) -> list:
+    source_name = unquote(source_name)
     with db() as con:
         rows = con.execute(
             "SELECT id, question, created_at FROM rag_questions WHERE source_name=? ORDER BY id",
@@ -449,6 +509,7 @@ def get_rag_questions(source_name: str) -> list:
 
 
 def delete_rag_questions(source_name: str) -> int:
+    source_name = unquote(source_name)
     with db() as con:
         cur = con.execute("DELETE FROM rag_questions WHERE source_name=?", (source_name,))
         return cur.rowcount
@@ -469,4 +530,24 @@ def get_quiz_questions(limit: int = 3) -> list:
             ORDER BY RANDOM()
             LIMIT ?
         """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_quiz_correction(user_id: int, question: str, answer: str, evaluation: str, correction: str, source: str, page: str) -> int:
+    with db() as con:
+        cur = con.execute(
+            "INSERT INTO quiz_corrections(user_id, question, answer, evaluation, correction, source, page) VALUES(?,?,?,?,?,?,?)",
+            (user_id, question, answer, evaluation, correction, source, page)
+        )
+        return cur.lastrowid
+
+
+def get_user_quiz_corrections(username: str) -> list:
+    username = sanitize_username(username)
+    with db() as con:
+        rows = con.execute(
+            "SELECT qc.id, qc.question, qc.answer, qc.evaluation, qc.correction, qc.source, qc.page, qc.created_at "
+            "FROM quiz_corrections qc JOIN users u ON u.id = qc.user_id WHERE u.username=? ORDER BY qc.created_at DESC",
+            (username,)
+        ).fetchall()
         return [dict(r) for r in rows]

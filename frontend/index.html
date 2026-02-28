@@ -15,7 +15,7 @@
         rel="stylesheet">
 
     <!-- CSS -->
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
 
     <!-- Chart.js for Professor Dashboard -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -116,6 +116,10 @@
                                 <span class="sidebar-icon">📝</span>
                                 <span>Autoevaluación</span>
                             </button>
+                            <button class="sidebar-item" data-student-view="student-history">
+                                <span class="sidebar-icon">📖</span>
+                                <span>Historial</span>
+                            </button>
                         </nav>
                     </aside>
 
@@ -159,20 +163,6 @@
                                     <textarea id="text-input" placeholder="Escribe o pega tu texto aquí..."></textarea>
                                     <button id="process-text-btn" class="btn btn-secondary full-width">Analizar
                                         Texto</button>
-                                </div>
-                            </div>
-
-                            <!-- Usage Chart -->
-                            <div class="card chart-card">
-                                <h3>Tu Actividad Semanal</h3>
-                                <canvas id="studentUsageChart"></canvas>
-                            </div>
-
-                            <!-- History Section -->
-                            <div class="card history-card">
-                                <h3>Análisis Anteriores</h3>
-                                <div id="history-list" class="history-list">
-                                    <p class="text-muted">Cargando historial...</p>
                                 </div>
                             </div>
 
@@ -222,6 +212,17 @@
                             <div id="quiz-results" class="quiz-results hidden">
                             </div>
                         </div>
+
+                        <!-- Historial Sub-view (new content) -->
+                        <div id="student-history" class="student-subview">
+                            <div class="dashboard-header">
+                                <h2>Tu Historial</h2>
+                            </div>
+                            <div id="student-history-container" class="card" style="margin-bottom: 2rem; padding: 0;">
+                                <div class="text-center text-muted" style="padding: 2rem;">⏳ Cargando tu historial...
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -236,36 +237,61 @@
                     </div>
                 </div>
 
-                <div class="kpi-grid">
+                <div class="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="kpi-card">
                         <span class="kpi-label">Alumnos Activos</span>
                         <span class="kpi-value" id="prof-total-students">0</span>
                     </div>
                     <div class="kpi-card">
-                        <span class="kpi-label">Documentos Procesados</span>
+                        <span class="kpi-label">Análisis de Textos</span>
                         <span class="kpi-value" id="prof-total-docs">0</span>
+                    </div>
+                    <div class="kpi-card info">
+                        <span class="kpi-label">Total Frases Analizadas</span>
+                        <span class="kpi-value" id="prof-total-sentences">0</span>
                     </div>
                     <div class="kpi-card warning">
                         <span class="kpi-label">Promedio Errores 'Tú'</span>
                         <span class="kpi-value" id="prof-avg-errors">0.0</span>
                     </div>
+                    <div class="kpi-card info">
+                        <span class="kpi-label">Autoevaluaciones Realizadas</span>
+                        <span class="kpi-value" id="prof-total-quizzes">0</span>
+                    </div>
+                    <div class="kpi-card success">
+                        <span class="kpi-label">% Acierto en Tests</span>
+                        <span class="kpi-value" id="prof-quiz-score">0%</span>
+                    </div>
                 </div>
 
-                <div class="charts-container">
-                    <div class="card chart-card">
-                        <h3>Métricas Globales de la Clase</h3>
-                        <canvas id="classMetricsChart"></canvas>
+                <div class="charts-container" style="display: flex; justify-content: center; margin-bottom: 2rem;">
+                    <div class="card chart-card" style="margin-bottom: 0; width: 100%; max-width: 600px;">
+                        <h3 style="text-align: center;">Actividad Global</h3>
+                        <div style="position: relative; height: 350px; width: 100%;">
+                            <canvas id="activityPieChart"></canvas>
+                        </div>
                     </div>
                 </div>
 
                 <div class="card table-card">
-                    <h3>Listado de Alumnos</h3>
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="margin: 0;">Listado de Alumnos</h3>
+                        <div style="position: relative; max-width: 300px; width: 100%;">
+                            <select id="student-search-input" class="input-field"
+                                style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; background-color: white; cursor: pointer;">
+                                <option value="">Todos los alumnos</option>
+                                <!-- JS Populated -->
+                            </select>
+                        </div>
+                    </div>
                     <div class="table-responsive">
                         <table class="table" id="students-table">
                             <thead>
                                 <tr>
                                     <th>Alumno</th>
-                                    <th>Documentos Subidos</th>
+                                    <th>Textos Analizados</th>
+                                    <th>Autoevaluaciones Realizadas</th>
                                     <th>Última Actividad</th>
                                 </tr>
                             </thead>
@@ -276,18 +302,7 @@
                     </div>
                 </div>
 
-                <!-- Student Documents Detail -->
-                <div id="student-docs-container" class="hidden">
-                    <div class="card">
-                        <h3>Documentos de <span id="selected-student-name">Alumno</span></h3>
-                        <button onclick="closeStudentDocs()" class="btn btn-secondary"
-                            style="float:right;">Cerrar</button>
-                        <div style="clear:both;"></div>
-                        <div id="student-docs-list" class="docs-list">
-                            <!-- Populated by JS -->
-                        </div>
-                    </div>
-                </div>
+                <!-- Student Documents Detail will now be dynamically inserted as a table row -->
 
                 <div id="rag-modal" class="modal-overlay hidden">
                     <div class="modal-card">
@@ -335,8 +350,19 @@
         </main>
     </div>
 
+    <!-- Error Catcher -->
+    <script>
+        window.onerror = function (message, source, lineno, colno, error) {
+            alert("JS ERROR: " + message + " en linea: " + lineno);
+            return false;
+        };
+        window.addEventListener("unhandledrejection", function (event) {
+            alert("PROMISE ERROR: " + event.reason);
+        });
+    </script>
+
     <!-- Main Logic -->
-    <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js?v=19"></script>
 </body>
 
 </html>

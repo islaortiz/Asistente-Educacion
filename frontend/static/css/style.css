@@ -667,9 +667,9 @@ textarea:focus {
 }
 
 .doc-item:hover {
-	background: var(--primary);
-	color: white;
-	border-color: var(--primary);
+	background: #f1f5f9;
+	/* Tono ligeramente más oscuro que #f8fafc */
+	border-color: #cbd5e1;
 }
 
 .doc-item-name {
@@ -680,10 +680,6 @@ textarea:focus {
 .doc-item-date {
 	font-size: 0.85rem;
 	color: var(--text-muted);
-}
-
-.doc-item:hover .doc-item-date {
-	color: rgba(255, 255, 255, 0.8);
 }
 
 #student-docs-container {
@@ -842,6 +838,33 @@ textarea:focus {
 	border-radius: var(--radius);
 	background: var(--card-bg);
 	animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Student docs panels (professor view) */
+.student-docs-panels {
+	display: flex;
+	gap: 1rem;
+	margin-top: 1rem;
+}
+
+.student-docs-panels .panel {
+	flex: 1 1 0px;
+	min-width: 260px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 0.8rem;
+	background: var(--card-bg);
+}
+
+.panel-title {
+	font-weight: 700;
+	margin-bottom: 0.6rem;
+}
+
+@media (max-width: 900px) {
+	.student-docs-panels {
+		flex-direction: column;
+	}
 }
 
 .rag-questions-header {
@@ -1078,6 +1101,34 @@ textarea:focus {
 	color: #166534;
 	margin-left: 0.4rem;
 	vertical-align: middle;
+}
+
+/* Estado específico para la badge de corrección */
+.correction-badge.correct {
+	background: #dcfce7;
+	/* verde claro */
+	color: #166534;
+	/* texto verde oscuro */
+}
+
+.correction-badge.incorrect {
+	background: #fee2e2;
+	/* rojo claro */
+	color: #7f1d1d;
+	/* texto rojo oscuro */
+}
+
+.correction-badge.partial {
+	background: #fff7ed;
+	/* amarillo claro */
+	color: #92400e;
+	/* texto ámbar oscuro */
+}
+
+.correction-badge.neutral {
+	background: #eef2ff;
+	/* azul claro neutro */
+	color: #3730a3;
 }
 
 .correction-text {

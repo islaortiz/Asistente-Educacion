@@ -9,6 +9,7 @@ import pdfplumber
 from sentence_transformers import SentenceTransformer
 
 from backend.config import appSettings
+from backend.db import get_rag_questions
 
 
 settings = appSettings()
@@ -268,12 +269,16 @@ def list_indexed_sources(input_dir: Path = DEFAULT_INPUT_DIR) -> List[Dict[str, 
                 tz=timezone.utc,
             ).isoformat()
 
+        questions_list = get_rag_questions(source)
+        questions_count = len(questions_list) if questions_list else 0
+
         documents.append(
             {
                 "source": source,
                 "chunk_count": chunk_count,
                 "uploaded_at": uploaded_at,
                 "file_exists": file_exists,
+                "questions_count": questions_count,
             }
         )
 

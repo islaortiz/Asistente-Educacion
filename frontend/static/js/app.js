@@ -39,9 +39,7 @@ const dom = {
 		processBtnTxt: document.getElementById('process-text-btn'),
 		textInput: document.getElementById('text-input'),
 		results: document.getElementById('analysis-results'),
-		resultTabs: document.querySelectorAll('.result-tabs .tab-btn'),
-		usageChartCtx: document.getElementById('studentUsageChart'),
-		historyList: document.getElementById('history-list')
+		resultTabs: document.querySelectorAll('.result-tabs .tab-btn')
 	},
 	prof: {
 		refreshBtn: document.getElementById('refresh-prof-btn'),
@@ -61,19 +59,17 @@ const dom = {
 		ragQuestionsList: document.getElementById('rag-questions-list'),
 		ragQuestionsClose: document.getElementById('rag-questions-close'),
 		tableBody: document.querySelector('#students-table tbody'),
+		searchInput: document.getElementById('student-search-input'),
 		kpis: {
 			students: document.getElementById('prof-total-students'),
 			docs: document.getElementById('prof-total-docs'),
 			errors: document.getElementById('prof-avg-errors')
 		},
-		chartCtx: document.getElementById('classMetricsChart'),
-		docsContainer: document.getElementById('student-docs-container'),
-		docsList: document.getElementById('student-docs-list'),
-		selectedStudentName: document.getElementById('selected-student-name')
+		activityChartCtx: document.getElementById('activityPieChart'),
 	}
 };
 
-let metricsChart = null;
+let activityChart = null;
 let statusInterval = null;
 
 // --- INITIALIZATION ---
@@ -138,6 +134,8 @@ function setupEventListeners() {
 		});
 	});
 
+
+
 	// Forms
 	dom.auth.loginForm.addEventListener('submit', handleLogin);
 	dom.auth.registerForm.addEventListener('submit', handleRegister);
@@ -188,8 +186,32 @@ function setupEventListeners() {
 		});
 	});
 
-	// Prof
+	// Professor Actions
 	dom.prof.refreshBtn.addEventListener('click', loadProfessorData);
+
+	// Professor Student Search dropdown
+	if (dom.prof.searchInput) {
+		dom.prof.searchInput.addEventListener('change', (e) => {
+			const term = e.target.value.toLowerCase();
+			const rows = dom.prof.tableBody.querySelectorAll('tr:not(.student-details-row)');
+			rows.forEach(row => {
+				const usernameCell = row.querySelector('td:first-child');
+				if (usernameCell) {
+					const name = usernameCell.textContent.toLowerCase();
+					if (!term || name === term) {
+						row.style.display = '';
+					} else {
+						row.style.display = 'none';
+						// If details row is open below it, hide it too
+						const nextRow = row.nextElementSibling;
+						if (nextRow && nextRow.classList.contains('student-details-row')) {
+							nextRow.remove();
+						}
+					}
+				}
+			});
+		});
+	}
 
 	if (dom.prof.openRagModalBtn) {
 		dom.prof.openRagModalBtn.addEventListener('click', openRagModal);
@@ -240,6 +262,11 @@ function setupEventListeners() {
 
 			// Switch subview
 			const targetId = btn.dataset.studentView;
+
+			if (targetId === 'student-history') {
+				loadStudentFullHistory();
+			}
+
 			document.querySelectorAll('.student-subview').forEach(sv => {
 				sv.classList.remove('active');
 			});
@@ -384,37 +411,7 @@ function showView(viewName) {
 		loadProfessorData();
 	}
 	if (viewName === 'student') {
-		loadStudentHistory();
-	}
-}
-
-// Cargar historial de análisis del estudiante
-async function loadStudentHistory() {
-	try {
-		const res = await fetch(`/users/${state.user}/documents`);
-		const data = await res.json();
-
-		const historyList = document.getElementById('history-list');
-		if (!historyList) return;
-
-		if (data.documents && data.documents.length > 0) {
-			const historyHtml = data.documents.map(doc => `
-				<div class="history-item" onclick="loadDocument(${doc.id})">
-					<span class="history-name">${doc.filename}</span>
-					<span class="history-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')}</span>
-				</div>
-			`).join('');
-
-			historyList.innerHTML = historyHtml;
-		} else {
-			historyList.innerHTML = '<p class="text-muted">No hay análisis anteriores</p>';
-		}
-	} catch (err) {
-		console.warn('No se pudo cargar historial:', err);
-		const historyList = document.getElementById('history-list');
-		if (historyList) {
-			historyList.innerHTML = '<p class="text-muted">Error al cargar historial</p>';
-		}
+		// Pestaña de estudiante por defecto limpia
 	}
 }
 
@@ -590,18 +587,35 @@ async function loadProfessorData() {
 		dom.prof.kpis.docs.textContent = data.total_docs;
 		dom.prof.kpis.errors.textContent = (data.avg_metrics.frases_con_tu_impersonal || 0).toFixed(1);
 
-		// Chart
-		renderClassChart(data.avg_metrics);
+		const profTotalSentences = document.getElementById('prof-total-sentences');
+		if (profTotalSentences) profTotalSentences.textContent = data.total_sentences || 0;
+
+		const profTotalQuizzes = document.getElementById('prof-total-quizzes');
+		if (profTotalQuizzes) profTotalQuizzes.textContent = data.total_quizzes || 0;
+
+		const profQuizScore = document.getElementById('prof-quiz-score');
+		if (profQuizScore) profQuizScore.textContent = `${data.quiz_score_percent || 0}%`;
+
+		// Charts
+		renderClassCharts(data);
 
 		// Table
 		const rows = data.students.map(s => `
-            <tr onclick="loadStudentDocuments('${s.username}')" style="cursor:pointer;">
+            <tr onclick="loadStudentDocuments('${s.username}', this)" style="cursor:pointer;" title="Haz clic para ver/ocultar los análisis y autoevaluaciones">
                 <td>${s.username}</td>
                 <td>${s.docs_count}</td>
-                <td>${s.last_upload || 'Nunca'}</td>
+                <td>${s.quizzes_count || 0}</td>
+                <td>${s.last_upload ? new Date(s.last_upload).toLocaleDateString('es-ES') : 'Nunca'}</td>
             </tr>
         `).join('');
-		dom.prof.tableBody.innerHTML = rows || '<tr><td colspan="3" class="text-center">No hay alumnos.</td></tr>';
+		dom.prof.tableBody.innerHTML = rows || '<tr><td colspan="4" class="text-center">No hay alumnos.</td></tr>';
+
+		// Select options
+		const selectList = document.getElementById('student-search-input');
+		if (selectList) {
+			const optionsHtml = data.students.map(s => `<option value="${s.username}">${s.username}</option>`).join('');
+			selectList.innerHTML = '<option value="">Todos los alumnos</option>' + optionsHtml;
+		}
 
 	} catch (err) {
 		console.error(err);
@@ -610,35 +624,70 @@ async function loadProfessorData() {
 	}
 }
 
-function renderClassChart(metrics) {
-	const ctx = dom.prof.chartCtx.getContext('2d');
+function renderClassCharts(data) {
+	if (activityChart) activityChart.destroy();
 
-	if (metricsChart) metricsChart.destroy();
+	// 1. Actividad Global (Doughnut)
+	const ctxAct = dom.prof.activityChartCtx;
+	if (ctxAct) {
+		activityChart = new Chart(ctxAct.getContext('2d'), {
+			type: 'doughnut',
+			data: {
+				labels: ['Textos Analizados', 'Autoevaluaciones'],
+				datasets: [{
+					data: [data.total_docs || 0, data.total_quizzes || 0],
+					backgroundColor: ['rgba(59, 130, 246, 0.7)', 'rgba(16, 185, 129, 0.7)'],
+					borderColor: ['rgba(59, 130, 246, 1)', 'rgba(16, 185, 129, 1)'],
+					borderWidth: 1
+				}]
+			},
+			options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+		});
+	}
 
-	const labels = ["Total Frases", "Errores 'Tú'", "Cambios Realizados"];
-	const values = [
-		metrics.total_frases || 0,
-		metrics.frases_con_tu_impersonal || 0,
-		metrics.cambios_realizados_usuario || 0
-	];
+	// 2. Errores por Alumno (Pie)
+	const ctxErr = dom.prof.errorsChartCtx;
+	if (ctxErr && data.students) {
+		const studentsWithErrors = data.students.filter(s => s.total_errors > 0);
+		let labels = [];
+		let errorData = [];
+		let colors = [];
+		let borderColors = [];
 
-	metricsChart = new Chart(ctx, {
-		type: 'bar',
-		data: {
-			labels: labels,
-			datasets: [{
-				label: 'Promedio de Clase',
-				data: values,
-				backgroundColor: ['#3b82f6', '#ef4444', '#22c55e'],
-				borderRadius: 4
-			}]
-		},
-		options: {
-			responsive: true,
-			plugins: { legend: { display: false } },
-			scales: { y: { beginAtZero: true } }
+		if (studentsWithErrors.length > 0) {
+			labels = studentsWithErrors.map(s => s.username);
+			errorData = studentsWithErrors.map(s => s.total_errors);
+
+			const palette = [
+				'rgba(239, 68, 68, 0.7)', 'rgba(245, 158, 11, 0.7)', 'rgba(16, 185, 129, 0.7)',
+				'rgba(59, 130, 246, 0.7)', 'rgba(139, 92, 246, 0.7)', 'rgba(236, 72, 153, 0.7)',
+				'rgba(14, 165, 233, 0.7)', 'rgba(249, 115, 22, 0.7)', 'rgba(168, 85, 247, 0.7)',
+				'rgba(234, 179, 8, 0.7)'
+			];
+			// Repeat palette if needed
+			colors = labels.map((_, i) => palette[i % palette.length]);
+			borderColors = colors.map(c => c.replace('0.7)', '1)'));
+		} else {
+			labels = ['Sin Errores'];
+			errorData = [1];
+			colors = ['rgba(156, 163, 175, 0.3)'];
+			borderColors = ['rgba(156, 163, 175, 1)'];
 		}
-	});
+
+		errorsChart = new Chart(ctxErr.getContext('2d'), {
+			type: 'pie',
+			data: {
+				labels: labels,
+				datasets: [{
+					data: errorData,
+					backgroundColor: colors,
+					borderColor: borderColors,
+					borderWidth: 1
+				}]
+			},
+			options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+		});
+	}
 }
 
 function openRagModal() {
@@ -726,19 +775,21 @@ async function loadRagHistory() {
 
 		dom.prof.ragHistoryList.innerHTML = docs.map(doc => {
 			const source = doc.source || 'archivo.pdf';
-			const encodedSource = encodeURIComponent(source);
 			const chunkCount = Number(doc.chunk_count || 0);
+			const qCount = Number(doc.questions_count || 0);
 			const uploadedAt = doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString('es-ES') : 'fecha no disponible';
 
+			const btnText = qCount > 0 ? "🔄 Volver a generar" : "📝 Generar preguntas";
+
 			return `
-				<div class="rag-history-item">
+				<div class="rag-history-item" style="cursor: pointer;" data-rag-item-source="${escapeHtml(source)}">
 					<div class="rag-history-meta">
 						<span class="rag-history-source">${escapeHtml(source)}</span>
-						<span class="rag-history-detail">${chunkCount} chunks • ${escapeHtml(uploadedAt)}</span>
+						<span class="rag-history-detail">${chunkCount} chunks • ${qCount} preguntas • ${escapeHtml(uploadedAt)}</span>
 					</div>
 					<div class="rag-history-actions">
-						<button class="btn btn-primary btn-sm" data-rag-questions="${encodedSource}">📝 Preguntas</button>
-						<button class="btn btn-danger btn-sm" data-rag-delete="${encodedSource}">Eliminar</button>
+						<button class="btn btn-primary btn-sm" data-rag-questions="${escapeHtml(source)}" onclick="event.stopPropagation();">${btnText}</button>
+						<button class="btn btn-danger btn-sm" data-rag-delete="${escapeHtml(source)}" onclick="event.stopPropagation();">Eliminar</button>
 					</div>
 				</div>
 			`;
@@ -746,15 +797,22 @@ async function loadRagHistory() {
 
 		dom.prof.ragHistoryList.querySelectorAll('[data-rag-delete]').forEach(btn => {
 			btn.addEventListener('click', async () => {
-				const source = decodeURIComponent(btn.dataset.ragDelete || '');
+				const source = btn.dataset.ragDelete || '';
 				await deleteRagDocument(source);
 			});
 		});
 
 		dom.prof.ragHistoryList.querySelectorAll('[data-rag-questions]').forEach(btn => {
 			btn.addEventListener('click', async () => {
-				const source = decodeURIComponent(btn.dataset.ragQuestions || '');
-				await showRagQuestions(source);
+				const source = btn.dataset.ragQuestions || '';
+				await showRagQuestions(source, true); // force regenerate
+			});
+		});
+
+		dom.prof.ragHistoryList.querySelectorAll('[data-rag-item-source]').forEach(item => {
+			item.addEventListener('click', async () => {
+				const source = item.dataset.ragItemSource || '';
+				await showRagQuestions(source, false); // only show current
 			});
 		});
 	} catch (err) {
@@ -964,6 +1022,8 @@ async function correctQuizAnswer(btn) {
 		fd.append('question', question);
 		fd.append('answer', answerEl.value.trim());
 		fd.append('source_name', source);
+		// Attach username so backend can persist the correction
+		if (state.user) fd.append('username', state.user);
 
 		const res = await fetch('/rag/quiz/correct', { method: 'POST', body: fd });
 		const data = await res.json().catch(() => ({}));
@@ -974,7 +1034,17 @@ async function correctQuizAnswer(btn) {
 		}
 
 		// Renderizar corrección
-		const evaluationBadge = data.evaluation ? `<span class="correction-badge">${escapeHtml(data.evaluation)}</span>` : '';
+		let evaluationBadge = '';
+		if (data.evaluation) {
+			const evalKey = String(data.evaluation).toLowerCase().trim();
+			let evalClass = 'correction-badge';
+			if (evalKey === 'correcta' || evalKey === 'correct') evalClass += ' correct';
+			else if (evalKey === 'incorrecta' || evalKey === 'incorrect') evalClass += ' incorrect';
+			else if (evalKey.includes('parcialmente correcta')) evalClass += ' partial';
+			else evalClass += ' neutral';
+
+			evaluationBadge = `<span class="${evalClass}">${escapeHtml(data.evaluation)}</span>`;
+		}
 		const correctionHtml = (data.correction || '').replace(/\n/g, '<br>');
 		const relevantCtx = data.relevant_context || '';
 
@@ -999,6 +1069,227 @@ async function correctQuizAnswer(btn) {
 		btn.disabled = false;
 		btn.textContent = '✅ Corregir';
 	}
+}
+
+// ==== HISTORIAL DEL ALUMNO ====
+async function loadStudentFullHistory() {
+	if (!state.user) return;
+
+	const historyContainer = document.getElementById('student-history-container');
+	if (!historyContainer) return;
+
+	console.log("Cargando historial completo (usando ruta compat) para:", state.user);
+	historyContainer.innerHTML = '<div class="text-center text-muted" style="padding: 2rem;">⏳ Cargando tu historial...</div>';
+
+	try {
+		// Fetch Documents & Corrections using professor routes for maximum compatibility
+		const [docsRes, corrRes] = await Promise.all([
+			fetch(`/professor/students/${encodeURIComponent(state.user)}/documents`),
+			fetch(`/professor/students/${encodeURIComponent(state.user)}/corrections`)
+		]);
+
+		if (!docsRes.ok || !corrRes.ok) {
+			throw new Error("Servidor no respondió correctamente a las rutas de datos.");
+		}
+
+		const docsData = await docsRes.json();
+		const corrData = await corrRes.json();
+
+		// HTML de documentos (Análisis de textos)
+		let docsHtml = '<p class="text-muted">No has analizado ningún texto aún.</p>';
+		if (docsData.documents && docsData.documents.length > 0) {
+			docsHtml = docsData.documents.map(doc => {
+				const originalText = doc.original_text || 'Sin texto original';
+				const correctedText = doc.corrected || 'Sin corrección sugerida';
+				const changes = doc.metricas?.cambios_propuestos_modelo || 0;
+				const tu_imp = doc.metricas?.frases_con_tu_impersonal || 0;
+
+				return `
+					<div class="doc-item" onclick='showStudentDocDetails(${JSON.stringify(doc).replace(/'/g, "&apos;")})' style="cursor: pointer;">
+						<div class="doc-item-name" style="white-space: pre-wrap; margin-bottom: 0.5rem;"><strong>Texto analizado el ${new Date(doc.uploaded_at).toLocaleDateString('es-ES')}:</strong><br>${escapeHtml(originalText)}</div>
+						<div class="doc-item-date" style="white-space: pre-wrap; margin-top: 0.5rem; color: #15803d;"><strong>Corrección sugerida:</strong><br>${escapeHtml(correctedText)}</div>
+						<div class="doc-item-date" style="margin-top: 0.5rem; border-top: 1px solid #e5e7eb; padding-top: 0.5rem;">${changes} sugerencias • ${tu_imp} usos de 'tú' impersonal</div>
+					</div>
+				`;
+			}).join('');
+		}
+
+		// HTML de correcciones (Autoevaluaciones)
+		let corrsHtml = '<p class="text-muted">No has realizado ninguna autoevaluación aún.</p>';
+		const corrections = Array.isArray(corrData.corrections) ? corrData.corrections : [];
+		if (corrections.length > 0) {
+			corrsHtml = corrections.map(c => `
+				<div class="doc-item">
+					<div class="doc-item-name">${escapeHtml(c.question || c.answer || '')}</div>
+					<div class="doc-item-date">${new Date(c.created_at).toLocaleString('es-ES')} • ${buildEvalBadge(c.evaluation || '')}</div>
+					<div class="doc-item-date">Corrección: ${escapeHtml(c.correction || '')}</div>
+				</div>
+			`).join('');
+		}
+
+		// Renderizar estructura dual
+		const historyContainer = document.getElementById('student-history-container');
+		if (historyContainer) {
+			historyContainer.innerHTML = `
+				<div class="student-docs-panels" style="display: flex; gap: 1.5rem;">
+					<div class="panel" style="flex: 1; min-width: 0;">
+						<h4 class="panel-title" style="border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem; margin-bottom: 1rem;">Análisis de textos</h4>
+						<div class="docs-list" style="max-height: 600px; overflow-y: auto; padding-right: 0.5rem;">
+							${docsHtml}
+						</div>
+					</div>
+					<div class="panel" style="flex: 1; min-width: 0;">
+						<h4 class="panel-title" style="border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem; margin-bottom: 1rem;">Autoevaluaciones</h4>
+						<div class="docs-list text-muted" style="max-height: 600px; overflow-y: auto; padding-right: 0.5rem;">
+							${corrsHtml}
+						</div>
+					</div>
+				</div>
+			`;
+		}
+
+	} catch (err) {
+		console.error("Error al cargar el historial del estudiante:", err);
+		const historyContainer = document.getElementById('student-history-container');
+		if (historyContainer) {
+			historyContainer.innerHTML = '<p class="text-muted text-center" style="color: #ef4444;">Ocurrió un error al cargar el historial.</p>';
+		}
+	}
+}
+
+function showStudentDocDetails(doc) {
+	try {
+		// Remove existing if any
+		const existing = document.querySelector('.student-history-modal');
+		if (existing) existing.remove();
+
+		const html = `
+			<div style="background: white; border:1px solid #e2e8f0; border-radius: 8px; padding: 1.5rem; margin-top: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+				<h4 style="margin-top:0;">${escapeHtml(doc.filename || 'Texto sin título')}</h4>
+				<div class="kpi-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 1rem; margin-top: 1rem;">
+					<div class="kpi-card info"><span class="kpi-label">Frases con tú impersonal</span><span class="kpi-value text-danger" style="color: #dc2626">${doc.metricas?.frases_con_tu_impersonal || 0}</span></div>
+					<div class="kpi-card success"><span class="kpi-label">Cambios sugeridos</span><span class="kpi-value">${doc.metricas?.cambios_propuestos_modelo || 0}</span></div>
+					<div class="kpi-card"><span class="kpi-label">Total frases</span><span class="kpi-value">${doc.metricas?.total_frases || 0}</span></div>
+				</div>
+				<div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+					<div style="flex: 1; min-width: 250px;">
+						<h5 style="color: var(--text-muted); margin-bottom: 0.5rem;">Texto Original</h5>
+						<div class="code-block" style="background:#f8fafc; font-size: 0.9em; max-height: 250px; overflow-y:auto;">${escapeHtml(doc.original_text || '')}</div>
+					</div>
+					<div style="flex: 1; min-width: 250px;">
+						<h5 style="color: var(--primary); margin-bottom: 0.5rem;">Versión Sugerida</h5>
+						<div class="code-block" style="background:#f0fdfa; font-size: 0.9em; max-height: 250px; overflow-y:auto; border-color: #ccfbf1;">${escapeHtml(doc.corrected || '')}</div>
+					</div>
+				</div>
+			</div>
+		`;
+
+		const btnLayout = `
+            <button class="btn btn-sm btn-secondary" onclick="this.closest('.student-history-modal').remove()" style="margin-bottom:1rem;">Volver al historial</button>
+            ${html}
+        `;
+
+		const modal = document.createElement('div');
+		modal.className = 'student-history-modal';
+		modal.style.position = 'fixed';
+		modal.style.top = '0'; modal.style.left = '0'; modal.style.width = '100vw'; modal.style.height = '100vh';
+		modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+		modal.style.display = 'flex'; modal.style.alignItems = 'center'; modal.style.justifyContent = 'center';
+		modal.style.zIndex = '9999';
+
+		modal.innerHTML = `
+			<div style="background:white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 900px; max-height: 90vh; overflow-y:auto; position:relative;">
+				<button onclick="this.closest('.student-history-modal').remove()" style="position:absolute; top: 1rem; right: 1rem; border:none; background:none; font-size: 1.5rem; cursor:pointer;">&times;</button>
+				${btnLayout}
+			</div>
+		`;
+		document.body.appendChild(modal);
+
+	} catch (e) {
+		console.error("Error parsing doc", e);
+	}
+}
+
+function showStudentQuizDetails(quizzes, dateKey) {
+	try {
+		const existing = document.querySelector('.student-history-modal');
+		if (existing) existing.remove();
+
+		const html = quizzes.map((q, idx) => `
+			<div class="quiz-card" style="margin-bottom: 0.5rem; border-left: 4px solid ${q.is_correct ? '#16a34a' : '#dc2626'}">
+				<p><strong>P${idx + 1}:</strong> ${escapeHtml(q.question_text || '')}</p>
+				<p style="font-size:0.9em; color:#64748b;">PDF: ${escapeHtml(q.source_name || '?')}</p>
+				<div style="margin-top: 0.5rem; font-size:0.9em; display:flex; gap: 1rem;">
+					<span style="color: ${q.is_correct ? '#16a34a' : '#dc2626'}">
+						<strong>Su respuesta:</strong> ${q.user_answer ? 'Verdadero' : 'Falso'}
+					</span>
+				</div>
+			</div>
+		`).join('');
+
+		const modal = document.createElement('div');
+		modal.className = 'student-history-modal';
+		modal.style.position = 'fixed';
+		modal.style.top = '0'; modal.style.left = '0'; modal.style.width = '100vw'; modal.style.height = '100vh';
+		modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+		modal.style.display = 'flex'; modal.style.alignItems = 'center'; modal.style.justifyContent = 'center';
+		modal.style.zIndex = '9999';
+
+		modal.innerHTML = `
+			<div style="background:white; padding: 2rem; border-radius: 12px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y:auto; position:relative;">
+				<button onclick="this.closest('.student-history-modal').remove()" style="position:absolute; top: 1rem; right: 1rem; border:none; background:none; font-size: 1.5rem; cursor:pointer;">&times;</button>
+				<h3 style="margin-top:0;">Autoevaluación: ${escapeHtml(dateKey)}</h3>
+				<div style="margin-top: 1rem">${html}</div>
+			</div>
+		`;
+		document.body.appendChild(modal);
+
+	} catch (e) {
+		console.error("Error parsing quiz", e);
+	}
+}
+
+async function loadStudentCorrections(username) {
+	if (!username || !dom.prof.docsContainer) return;
+	try {
+		const res = await fetch(`/professor/students/${encodeURIComponent(username)}/corrections`);
+		const data = await res.json().catch(() => ({}));
+		const corrections = Array.isArray(data.corrections) ? data.corrections : [];
+		renderStudentCorrections(corrections);
+	} catch (err) {
+		console.error('Error cargando correcciones del alumno:', err);
+	}
+}
+
+function buildEvalBadge(evaluation) {
+	if (!evaluation) return '';
+	const evalKey = String(evaluation).toLowerCase().trim();
+	let evalClass = 'correction-badge';
+	if (['correcta', 'correcto', 'correct'].includes(evalKey)) evalClass += ' correct';
+	else if (['incorrecta', 'incorrecto', 'incorrect'].includes(evalKey)) evalClass += ' incorrect';
+	else if (evalKey.includes('parcial')) evalClass += ' partial';
+	else evalClass += ' neutral';
+	return `<span class="${evalClass}">${escapeHtml(evaluation)}</span>`;
+}
+
+function renderStudentCorrections(corrections) {
+	const listEl = document.getElementById('student-corrections-list');
+	if (!listEl) return;
+
+	if (!corrections || corrections.length === 0) {
+		listEl.innerHTML = '<p class="text-muted">No hay correcciones guardadas.</p>';
+		return;
+	}
+
+	const html = corrections.map(c => `
+		<div class="doc-item">
+			<div class="doc-item-name">${escapeHtml(c.question || c.answer || '')}</div>
+			<div class="doc-item-date">${new Date(c.created_at).toLocaleString('es-ES')} • ${buildEvalBadge(c.evaluation || '')}</div>
+			<div class="doc-item-date">Corrección: ${escapeHtml(c.correction || '')}</div>
+		</div>
+	`).join('');
+
+	listEl.innerHTML = html;
 }
 
 // --- SHARED / UTILS ---
@@ -1073,63 +1364,108 @@ function startStatusPolling() {
 }
 
 // --- PROFESSOR DOCUMENTS ---
-async function loadStudentDocuments(username) {
-	showLoader(true, false);
+async function loadStudentDocuments(username, currentRow) {
+	// Si la fila de detalles ya existe justo debajo, ciérrala (toggle)
+	const nextRow = currentRow.nextElementSibling;
+	if (nextRow && nextRow.classList.contains('student-details-row')) {
+		nextRow.remove();
+		return;
+	}
+
+	// Cerrar cualquier otra fila de detalles abierta
+	document.querySelectorAll('.student-details-row').forEach(row => row.remove());
+
+	// Crear nueva fila para alojar el contenido
+	const detailsRow = document.createElement('tr');
+	detailsRow.className = 'student-details-row';
+	const detailsCell = document.createElement('td');
+	detailsCell.colSpan = 3;
+	detailsCell.style.padding = '0';
+	detailsCell.style.backgroundColor = '#f8fafc';
+	detailsCell.style.borderBottom = '2px solid #e2e8f0';
+	detailsRow.appendChild(detailsCell);
+
+	currentRow.insertAdjacentElement('afterend', detailsRow);
+
+	// Contenedor interno mostrando cargador
+	detailsCell.innerHTML = `
+		<div style="padding: 1rem;">
+			<div class="text-center text-muted">⏳ Cargando datos de ${escapeHtml(username)}...</div>
+		</div>
+	`;
+
 	try {
-		const res = await fetch(`/professor/students/${username}/documents`);
-		const data = await res.json();
+		// Petición de documentos y correcciones en paralelo
+		const [resDocs, resCorrs] = await Promise.all([
+			fetch(`/professor/students/${encodeURIComponent(username)}/documents`),
+			fetch(`/professor/students/${encodeURIComponent(username)}/corrections`)
+		]);
 
-		dom.prof.selectedStudentName.textContent = username;
+		const dataDocs = await resDocs.json().catch(() => ({}));
+		const dataCorrs = await resCorrs.json().catch(() => ({}));
 
-		if (data.documents && data.documents.length > 0) {
-			const docsHtml = data.documents.map(doc => `
-				<div class="doc-item" onclick="viewDocumentDetail(${doc.id})">
-					<div class="doc-item-name">${doc.filename}</div>
-					<div class="doc-item-date">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')} - ${doc.metricas.total_frases || 0} frases</div>
+		// HTML de documentos (Análisis de textos)
+		let docsHtml = '<p class="text-muted">Este alumno no tiene documentos.</p>';
+		if (dataDocs.documents && dataDocs.documents.length > 0) {
+			docsHtml = dataDocs.documents.map(doc => {
+				const originalText = doc.original_text || 'Sin texto original';
+				const correctedText = doc.corrected || 'Sin corrección sugerida';
+				return `
+					<div class="doc-item">
+						<div class="doc-item-name" style="white-space: pre-wrap; margin-bottom: 0.5rem;"><strong>Texto del alumno:</strong><br>${escapeHtml(originalText)}</div>
+						<div class="doc-item-date" style="white-space: pre-wrap; margin-top: 0.5rem; color: #15803d;"><strong>Corrección sugerida:</strong><br>${escapeHtml(correctedText)}</div>
+						<div class="doc-item-date" style="margin-top: 0.5rem; border-top: 1px solid #e5e7eb; padding-top: 0.5rem;">${new Date(doc.uploaded_at).toLocaleDateString('es-ES')} - ${doc.metricas.total_frases || 0} frases</div>
+					</div>
+				`;
+			}).join('');
+		}
+
+		// HTML de correcciones (Autoevaluaciones)
+		let corrsHtml = '<p class="text-muted">No hay correcciones guardadas.</p>';
+		const corrections = Array.isArray(dataCorrs.corrections) ? dataCorrs.corrections : [];
+		if (corrections.length > 0) {
+			corrsHtml = corrections.map(c => `
+				<div class="doc-item">
+					<div class="doc-item-name">${escapeHtml(c.question || c.answer || '')}</div>
+					<div class="doc-item-date">${new Date(c.created_at).toLocaleString('es-ES')} • ${buildEvalBadge(c.evaluation || '')}</div>
+					<div class="doc-item-date">Corrección: ${escapeHtml(c.correction || '')}</div>
 				</div>
 			`).join('');
-
-			dom.prof.docsList.innerHTML = docsHtml;
-		} else {
-			dom.prof.docsList.innerHTML = '<p class="text-muted">Este alumno no tiene documentos.</p>';
 		}
 
-		dom.prof.docsContainer.classList.remove('hidden');
+		// Pintar ambas columnas directamente en el detailsCell
+		detailsCell.innerHTML = `
+			<div style="padding: 1.5rem; border-left: 4px solid #3b82f6;">
+				<h4 style="margin-top:0; margin-bottom: 1rem; font-size: 1.1rem; color: #1f2937;">Detalles de ${escapeHtml(username)}</h4>
+				<div class="student-docs-panels" style="display: flex; gap: 1.5rem;">
+					<div class="panel" style="flex: 1; min-width: 0;">
+						<h4 class="panel-title" style="border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem; margin-bottom: 1rem;">Análisis de textos</h4>
+						<div class="docs-list" style="max-height: 400px; overflow-y: auto; padding-right: 0.5rem;">
+							${docsHtml}
+						</div>
+					</div>
+					<div class="panel" style="flex: 1; min-width: 0;">
+						<h4 class="panel-title" style="border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem; margin-bottom: 1rem;">Autoevaluaciones</h4>
+						<div class="docs-list text-muted" style="max-height: 400px; overflow-y: auto; padding-right: 0.5rem;">
+							${corrsHtml}
+						</div>
+					</div>
+				</div>
+			</div>
+		`;
 	} catch (err) {
-		console.error('Error cargando documentos:', err);
-		alert('No se pudo cargar los documentos del alumno');
-	} finally {
-		showLoader(false);
-	}
-}
-
-function closeStudentDocs() {
-	dom.prof.docsContainer.classList.add('hidden');
-}
-
-async function viewDocumentDetail(docId) {
-	try {
-		const res = await fetch(`/documents/${docId}`);
-		const data = await res.json();
-
-		if (data.doc_id) {
-			// Guarda el estudiante para volver después
-			closeStudentDocs();
-
-			// Muestra los resultados como si fuera del estudiante
-			renderResults(data);
-		}
-	} catch (err) {
-		console.error('Error cargando documento:', err);
-		alert('No se pudo cargar el documento');
+		console.error('Error cargando detalles del alumno:', err);
+		detailsCell.innerHTML = `
+			<div style="padding: 1rem;">
+				<div class="text-center" style="color: #ef4444;">No se pudieron cargar los datos del alumno.</div>
+			</div>
+		`;
 	}
 }
 
 // Expose handlers used by inline onclick attributes when running as module
 window.loadDocument = loadDocument;
 window.loadStudentDocuments = loadStudentDocuments;
-window.viewDocumentDetail = viewDocumentDetail;
-window.closeStudentDocs = closeStudentDocs;
 
 // Start
 init();
