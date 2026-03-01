@@ -66,8 +66,8 @@ def clean_text(text: str) -> str:
 
 def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
     """
-    Divide el texto recursivamente usando una jerarquía de separadores para 
-    mantener el contexto semántico (párrafos -> líneas -> frases -> palabras).
+    Divide el texto recursivamente usando una jerarquia de separadores para
+    mantener el contexto semantico (parrafos -> lineas -> frases -> palabras).
     """
     if not text:
         return []
@@ -75,23 +75,18 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
     if overlap >= chunk_size:
         raise ValueError("CHUNK_OVERLAP debe ser menor que CHUNK_SIZE.")
 
-    # Jerarquía de separadores de mayor a menor significado semántico
     separators = ["\n\n", "\n", ". ", " "]
 
     def _split(text_to_split: str, sep_index: int) -> List[str]:
-        # Condición de parada: el texto ya cabe en un chunk
         if len(text_to_split) <= chunk_size:
             return [text_to_split]
 
-        # Si nos quedamos sin separadores, cortamos por caracteres brutos
         if sep_index >= len(separators):
-            return [text_to_split[i:i+chunk_size] for i in range(0, len(text_to_split), chunk_size - overlap)]
+            return [text_to_split[i:i + chunk_size] for i in range(0, len(text_to_split), chunk_size - overlap)]
 
         separator = separators[sep_index]
-        
-        # Dividir el texto
+
         if separator == ". ":
-            # Truco para no perder el punto al final de las frases
             splits = [s + ". " for s in text_to_split.split(". ") if s]
         else:
             splits = text_to_split.split(separator)
@@ -108,14 +103,14 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
                     chunks.append(separator.join(current_chunk_pieces).strip())
                     current_chunk_pieces = []
                     current_length = 0
-                
+
                 sub_chunks = _split(split, sep_index + 1)
                 chunks.extend(sub_chunks)
                 continue
 
             if current_length + len(split) > chunk_size and current_chunk_pieces:
                 chunks.append(separator.join(current_chunk_pieces).strip())
-                
+
                 overlap_length = 0
                 overlap_pieces = []
                 for piece in reversed(current_chunk_pieces):
@@ -123,7 +118,7 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
                         break
                     overlap_pieces.insert(0, piece)
                     overlap_length += len(piece) + len(separator)
-                
+
                 current_chunk_pieces = overlap_pieces
                 current_length = sum(len(p) + len(separator) for p in current_chunk_pieces)
 
@@ -181,7 +176,7 @@ def build_rows_from_pdf(pdf_path: Path) -> List[Dict]:
 
 def upsert_rows(collection, model: SentenceTransformer, rows: List[Dict], batch_size: int) -> None:
     for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
+        batch = rows[i: i + batch_size]
         documents = [r["document"] for r in batch]
         ids = [r["id"] for r in batch]
         metadatas = [r["metadata"] for r in batch]
@@ -307,41 +302,3 @@ def delete_indexed_source(
         "deleted_file": deleted_file,
         "deleted": bool(deleted_chunks or deleted_file),
     }
-
-
-def retrieve_chunks(
-    query: str,
-    source_name: str | None = None,
-    n_results: int = 1,
-) -> List[Dict[str, Any]]:
-    """Busca los chunks más similares a la query. Filtra por source si se indica."""
-    collection = get_or_create_collection()
-    model = get_embedding_model()
-
-    query_embedding = model.encode(
-        [query], normalize_embeddings=True
-    ).tolist()
-
-    where_filter = {"source": source_name} if source_name else None
-
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=n_results,
-        where=where_filter,
-        include=["documents", "metadatas", "distances"],
-    )
-
-    chunks = []
-    docs = results.get("documents", [[]])[0]
-    metas = results.get("metadatas", [[]])[0]
-    dists = results.get("distances", [[]])[0]
-
-    for doc, meta, dist in zip(docs, metas, dists):
-        chunks.append({
-            "text": doc,
-            "source": meta.get("source", ""),
-            "page": meta.get("page", 0),
-            "distance": dist,
-        })
-
-    return chunks

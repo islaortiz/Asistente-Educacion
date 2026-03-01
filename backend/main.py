@@ -17,8 +17,10 @@ from backend.rag.ingest import (
     ingest_pdf_bytes,
     list_indexed_sources,
     extract_pdf_pages,
-    retrieve_chunks,
     DEFAULT_INPUT_DIR,
+)
+from backend.rag.retriever import (
+    retrieve_chunks,
 )
 from backend.db import (
     init_db, user_exists, create_user, get_user_id, get_user_role,
