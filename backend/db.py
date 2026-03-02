@@ -435,7 +435,8 @@ def get_global_overview():
         quiz_stats = con.execute("""
             SELECT 
                 COUNT(*) as total_quizzes,
-                SUM(CASE WHEN LOWER(evaluation) LIKE '%correct%' OR LOWER(evaluation) LIKE '%correcta%' THEN 1 ELSE 0 END) as correct_quizzes
+                SUM(CASE WHEN (LOWER(evaluation) LIKE '%correct%' OR LOWER(evaluation) LIKE '%correcta%') 
+                              AND LOWER(evaluation) NOT LIKE '%incorrect%' THEN 1 ELSE 0 END) as correct_quizzes
             FROM quiz_corrections
         """).fetchone()
 
